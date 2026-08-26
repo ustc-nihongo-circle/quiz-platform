@@ -32,6 +32,7 @@ htmlcov/
 /staticfiles/
 /exports/
 /backups/
+/output/
 *.sqlite3
 
 # Editors and operating systems.

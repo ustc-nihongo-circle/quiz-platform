@@ -20,6 +20,7 @@ fi
 ln -sfn "$release_dir" "$app_root/current.next"
 mv -Tf "$app_root/current.next" "$app_root/current"
 systemctl restart nihongo-quiz.service
-curl --fail --silent http://127.0.0.1:18080/health/ready/ >/dev/null
+curl --fail --silent --header 'X-Forwarded-Proto: https' \
+  http://127.0.0.1:18080/health/ready/ | grep -F '"database": "ok"' >/dev/null
 echo "rolled application code back to $1"
 echo "database migrations were not reversed"
