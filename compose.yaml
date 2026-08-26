@@ -1,0 +1,19 @@
+services:
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: nihongo_quiz
+      POSTGRES_USER: nihongo_quiz
+      POSTGRES_PASSWORD: local-development-only
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nihongo_quiz -d nihongo_quiz"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - nihongo_quiz_pgdata:/var/lib/postgresql
+
+volumes:
+  nihongo_quiz_pgdata:

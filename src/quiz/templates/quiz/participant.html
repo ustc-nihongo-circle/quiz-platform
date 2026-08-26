@@ -1,0 +1,304 @@
+{% load static %}<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>USTC 日语协会游园会答题</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="{% static 'quiz/participant.css' %}">
+</head>
+<body id="participantApp" data-screen="boot" data-overlay="none">
+  <div id="pageRoot">
+    <div class="ghost-layer" aria-hidden="true">
+      <span>(´▽｀)</span><span>日</span><span>?</span><span>(=ﾟωﾟ)ﾉ</span><span>答</span><span>✦</span>
+    </div>
+
+    <div class="browser-strip" aria-hidden="true">
+      <span>QUIZ_HOME/main</span>
+      <span class="address">quiz.mmdustc.top / participant</span>
+      <span class="window-glyphs">− □ ×</span>
+    </div>
+
+    <main class="app-frame" id="appFrame">
+      <header class="app-titlebar">
+        <span>USTC_NIHONGO_QUIZ.exe</span>
+        <span class="window-glyphs">− □ ×</span>
+      </header>
+
+      <div class="app-header">
+        <div class="brand-block" aria-label="USTC 日语协会游园会答题">
+          <span class="brand-kicker">USTC NIHONGO CIRCLE</span>
+          <strong>游园会答题</strong>
+          <span class="brand-jp">ようこそ、楽しんでね。</span>
+        </div>
+        <div class="activity-chip" id="activityChip" aria-live="polite">
+          <span class="status-dot" aria-hidden="true"></span>
+          <div>
+            <b id="activityStatusText">正在读取活动…</b>
+            <small id="activityRuleText">请稍候</small>
+          </div>
+        </div>
+      </div>
+
+      <section class="screen is-active" data-screen-panel="boot" aria-label="加载中">
+        <div class="boot-window window-card">
+          <div class="window-title">BOOTSTRAP.request</div>
+          <div class="window-body">
+            <p class="eyebrow">GET /api/v1/activity</p>
+            <h1>正在读取活动</h1>
+            <p>加载活动状态、板块和 CSRF Cookie。</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen" data-screen-panel="register" aria-labelledby="registerTitle">
+        <div class="register-layout">
+          <article class="welcome-pane">
+            <div class="window-card compact-window">
+              <div class="window-title">WELCOME.txt</div>
+              <div class="window-body">
+                <p class="eyebrow" id="activityCodeText">PARTICIPANT SESSION</p>
+                <h1 id="registerTitle">先登记，再开始挑战</h1>
+                <p id="registerIntro">第一次来会创建参与记录。再次进入时使用相同学号或工号和联系方式。</p>
+                <div class="activity-notice" id="activityNotice" hidden></div>
+              </div>
+            </div>
+
+            <div class="pixel-note window-card">
+              <div class="window-title">YURIKO_HELP.exe</div>
+              <div class="pixel-note-body">
+                <span class="yuriko-sprite pose-neutral" role="img" aria-label="第 1 组待机动画的像素 Yuriko，作者 Kano"></span>
+                <div>
+                  <b>资料不会显示在答题页。</b>
+                  <p>工作人员需要时再核对。请不要把联系方式填进显示名。</p>
+                  <small>SPRITE / KANO</small>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <form class="window-card form-window" id="registrationForm" novalidate>
+            <div class="window-title">PARTICIPANT_SESSION.form</div>
+            <div class="window-body form-body">
+              <div class="mode-note">
+                <span>同一张表完成</span>
+                <b>登记 / 再次进入</b>
+              </div>
+
+              <label>
+                <span>显示名</span>
+                <small>姓名或昵称均可</small>
+                <input name="display_name" autocomplete="nickname" maxlength="100" placeholder="例如：林檎同学" required>
+              </label>
+
+              <label>
+                <span>学号或工号</span>
+                <small>用于找回本次活动记录</small>
+                <input name="identifier" autocomplete="username" placeholder="例如：PBxxxxxxxx" required>
+              </label>
+
+              <fieldset>
+                <legend>联系方式</legend>
+                <div class="contact-tabs" role="radiogroup" aria-label="联系方式类型">
+                  <label><input type="radio" name="contact_type" value="phone" checked><span>手机号</span></label>
+                  <label><input type="radio" name="contact_type" value="email"><span>邮箱</span></label>
+                </div>
+                <input name="contact" autocomplete="tel" inputmode="tel" placeholder="例如：138 0000 0000" required>
+              </fieldset>
+
+              <div class="privacy-copy">
+                <span aria-hidden="true">i</span>
+                <p>资料通过 HTTPS 提交，只用于本次活动记录与必要联系。答题页不展示学号、工号或联系方式。</p>
+              </div>
+
+              <button class="primary-button" id="registrationSubmit" type="submit">
+                <span>登记并继续</span><span aria-hidden="true">→</span>
+              </button>
+              <div class="operation-feedback" id="registrationFeedback" role="status" aria-live="polite"></div>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <section class="screen" data-screen-panel="sections" aria-labelledby="sectionsTitle">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow" id="participantWelcome">CATEGORY_SELECT</p>
+            <h1 id="sectionsTitle">选择一个板块</h1>
+            <p id="sectionsDescription">板块数据正在加载。</p>
+          </div>
+          <button class="text-button" id="clearSessionButton" type="button">更换参与者</button>
+        </div>
+
+        <div class="operation-feedback" id="sessionFeedback" role="status" aria-live="polite"></div>
+
+        <div class="resume-banner" id="resumeBanner" hidden>
+          <span class="yuriko-sprite pose-resume" role="img" aria-label="第 2 组长发动作动画的像素 Yuriko，作者 Kano"></span>
+          <div>
+            <b id="resumeTitle">发现未完成的答题</b>
+            <small id="resumeSummary"></small>
+          </div>
+          <button type="button" id="resumeAttemptButton">继续答题</button>
+        </div>
+        <div class="operation-feedback" id="attemptFeedback" role="status" aria-live="polite"></div>
+
+        <div class="category-grid" id="categoryGrid" aria-live="polite"></div>
+      </section>
+
+      <section class="screen" data-screen-panel="quiz" aria-labelledby="quizTitle">
+        <div class="quiz-topline">
+          <button class="back-button" id="backToSections" type="button">← 板块</button>
+          <div class="quiz-context">
+            <span id="quizCategoryTitle">板块</span>
+            <b id="quizTitle">第 <span id="questionNumber">1</span> / <span id="quizQuestionCount">0</span> 题</b>
+          </div>
+          <div class="timer" id="timerBox" aria-live="polite">
+            <small>DEADLINE</small>
+            <strong id="countdown">--:--</strong>
+          </div>
+        </div>
+
+        <div class="quiz-layout">
+          <aside class="question-map window-card">
+            <div class="window-title">QUESTION_MAP.dat</div>
+            <div class="question-map-body" id="questionMap" aria-label="题目导航"></div>
+            <div class="map-legend"><span><i class="answered"></i>已暂存</span><span><i></i>未作答</span></div>
+          </aside>
+
+          <article class="question-window window-card">
+            <div class="window-title">
+              <span id="questionWindowTitle">QUESTION.json</span>
+              <span class="save-state" id="saveState">尚未作答</span>
+            </div>
+            <div class="window-body question-body">
+              <div class="question-meta"><span id="questionTypeText">单选题</span><span>服务端题目</span></div>
+              <h2 id="questionPrompt"></h2>
+              <p class="question-hint">答案只暂存在当前标签页，交卷时一次提交。</p>
+
+              <figure class="question-media" id="questionMedia" hidden>
+                <img id="questionImage" alt="">
+                <figcaption id="questionImageCaption">题目配图</figcaption>
+              </figure>
+
+              <div class="options" id="answerOptions"></div>
+
+              <div class="quiz-actions">
+                <button class="secondary-button" type="button" id="previousQuestion">上一题</button>
+                <span id="answerProgress">已暂存 0 / 0</span>
+                <button class="primary-button" type="button" id="nextQuestion">下一题 →</button>
+              </div>
+            </div>
+          </article>
+        </div>
+
+        <div class="connection-line">
+          <span class="connection-ok" id="connectionState">● Session 有效</span>
+          <span>答案暂存在当前标签页，交卷时一次提交。倒计时由服务端 deadline 决定。</span>
+          <button type="button" id="submitAttempt">提前交卷</button>
+        </div>
+        <div class="operation-feedback" id="quizFeedback" role="status" aria-live="polite"></div>
+      </section>
+
+      <section class="screen" data-screen-panel="timeout" aria-labelledby="timeoutTitle">
+        <div class="timeout-layout">
+          <article class="timeout-window window-card">
+            <div class="window-title">ATTEMPT_TIMEOUT.json</div>
+            <div class="window-body timeout-body">
+              <p class="eyebrow">STATUS / TIMED_OUT</p>
+              <h1 id="timeoutTitle">本轮已超时</h1>
+              <p>服务端已把这轮答题标记为超时。当前答案没有形成正式提交，因此不会显示得分、逐题对错或兑奖词。</p>
+              <div class="timeout-facts">
+                <div><span>板块</span><b id="timeoutCategory">—</b></div>
+                <div><span>服务端截止时间</span><b id="timeoutDeadline">—</b></div>
+                <div><span>结果状态</span><b id="timeoutStatus">timed_out</b></div>
+              </div>
+              <div class="result-actions">
+                <button class="primary-button" type="button" id="timeoutBackToSections">返回板块</button>
+                <button class="secondary-button" type="button" id="timeoutClearSession">返回入口</button>
+              </div>
+              <div class="operation-feedback" id="timeoutFeedback" role="status" aria-live="polite"></div>
+            </div>
+          </article>
+
+          <article class="timeout-note window-card">
+            <div class="window-title">YURIKO_NOTICE.exe</div>
+            <div class="timeout-note-body">
+              <span class="yuriko-sprite pose-timeout" role="img" aria-label="第 3 组俯身动作动画的像素 Yuriko，作者 Kano"></span>
+              <div>
+                <h2>计时不会重新开始</h2>
+                <p>刷新或再次进入只会读取服务端保存的原题目和原截止时间。前端不会自行增加 3 秒宽限。</p>
+                <small>PIXEL YURIKO / KANO</small>
+              </div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="screen" data-screen-panel="result" aria-labelledby="resultTitle">
+        <div class="result-layout">
+          <article class="score-window window-card">
+            <div class="window-title">RESULT_SUMMARY.json</div>
+            <div class="window-body score-body">
+              <p class="eyebrow" id="resultCategory">本次挑战</p>
+              <h1 id="resultTitle">答题完成</h1>
+              <div class="score-display"><strong id="resultScore">0</strong><span>/ <span id="resultTotal">0</span></span></div>
+              <div class="score-compare">
+                <div><span>板块最高分</span><b id="resultHighScore">0 / 0</b></div>
+                <div><span>提交状态</span><b id="resultStatus">submitted</b></div>
+              </div>
+              <div class="reward-box" id="rewardBox" hidden>
+                <span>本次兑奖词</span>
+                <strong id="rewardPhrase"></strong>
+                <small>可复用短语 · 不作为身份凭证</small>
+              </div>
+              <div class="result-actions">
+                <button class="primary-button" type="button" id="resultBackToSections">再选一个板块</button>
+                <button class="secondary-button" type="button" id="resultClearSession">返回入口</button>
+              </div>
+              <div class="operation-feedback" id="resultFeedback" role="status" aria-live="polite"></div>
+            </div>
+          </article>
+
+          <article class="review-window window-card">
+            <div class="window-title">ANSWER_REVIEW.list</div>
+            <div class="window-body review-body">
+              <div class="review-heading">
+                <div>
+                  <h2>逐题结果</h2>
+                  <p>只显示对错，不公布正确答案。</p>
+                </div>
+                <span id="resultBreakdown">0 对 · 0 错</span>
+              </div>
+              <ol class="review-list" id="reviewList"></ol>
+            </div>
+          </article>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="modal-layer" id="modalLayer" hidden>
+    <div class="modal-shade" data-close-modal></div>
+    <section class="system-modal window-card" role="dialog" aria-modal="true" aria-labelledby="modalTitle" tabindex="-1">
+      <div class="window-title"><span id="modalWindowTitle">SYSTEM_NOTICE.exe</span><button type="button" data-close-modal aria-label="关闭弹窗">×</button></div>
+      <div class="system-modal-body">
+        <span class="yuriko-sprite pose-submit" id="modalSprite" role="img" aria-label="第 4 组带道具动画的像素 Yuriko，作者 Kano"></span>
+        <div>
+          <p class="eyebrow" id="modalEyebrow">SYSTEM NOTICE</p>
+          <h2 id="modalTitle">状态提示</h2>
+          <p id="modalMessage"></p>
+          <div class="modal-detail" id="modalDetail"></div>
+          <div class="modal-actions" id="modalActions"></div>
+        </div>
+      </div>
+      <small class="sprite-credit">PIXEL YURIKO / KANO</small>
+    </section>
+  </div>
+
+  <div class="sr-only" id="globalAnnouncer" aria-live="polite"></div>
+  {{ initial_participant|json_script:"initialParticipant" }}
+  {{ initial_attempt|json_script:"initialAttempt" }}
+  <script src="{% static 'quiz/participant.js' %}" defer></script>
+</body>
+</html>

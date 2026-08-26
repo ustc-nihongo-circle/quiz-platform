@@ -1,0 +1,41 @@
+# Local private material. Never add exceptions under this directory.
+/_private/
+
+# Agent runtime memory stays local because this repository may become public.
+/docs-agent/
+
+# Secrets and local settings.
+.env
+.env.*
+!.env.example
+
+# Python environments and caches.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.pytest-tmp-*/
+.tmp-tests/
+pytest-cache-files-*/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Runtime data and generated artifacts.
+/var/
+/media/
+/staticfiles/
+/exports/
+/backups/
+*.sqlite3
+
+# Editors and operating systems.
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

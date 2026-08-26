@@ -1,0 +1,2 @@
+"""Quiz database migrations."""
+
