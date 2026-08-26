@@ -37,8 +37,8 @@ if ! id nihongo-quiz >/dev/null 2>&1; then
   useradd --system --gid nihongo-quiz --home-dir "$app_root" --shell /usr/sbin/nologin nihongo-quiz
 fi
 usermod -a -G nihongo-quiz caddy
-install -d -o nihongo-quiz -g nihongo-quiz -m 0750 \
-  "$app_root/releases" \
+install -d -o nihongo-quiz -g nihongo-quiz -m 0750 "$app_root/releases"
+install -d -o nihongo-quiz -g nihongo-quiz -m 0700 \
   "$app_root/shared/media" \
   "$app_root/shared/env" \
   "$app_root/backups" \

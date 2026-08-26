@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 0077
 
 if [[ $# -ne 1 ]]; then
   echo "usage: $0 LAB_OPERATOR_PASSWORD" >&2

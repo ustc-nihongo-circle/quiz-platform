@@ -51,6 +51,19 @@ if [[ -z "${QUIZ_SECONDARY_BACKUP_DIR:-}" ]]; then
   echo "backup created but no secondary backup directory is configured" >&2
   exit 1
 fi
-install -d -m 0700 "$QUIZ_SECONDARY_BACKUP_DIR"
-cp -a "$final_dir" "$QUIZ_SECONDARY_BACKUP_DIR/"
+mkdir -p "$QUIZ_SECONDARY_BACKUP_DIR"
+if ! chmod 0700 "$QUIZ_SECONDARY_BACKUP_DIR" 2>/dev/null; then
+  # Windows DrvFs/NTFS mounts may reject POSIX mode changes. The primary Linux
+  # backup remains 0700; access to this secondary copy is governed by Windows ACLs.
+  echo "secondary backup filesystem does not support chmod; relying on host ACLs" >&2
+fi
+# The integrity manifest, rather than POSIX metadata, is authoritative for the
+# secondary copy. Copy the flat bundle file-by-file because GNU cp otherwise
+# tries to chmod a newly-created directory even with --no-preserve on DrvFs.
+secondary_target=$QUIZ_SECONDARY_BACKUP_DIR/$(basename "$final_dir")
+mkdir "$secondary_target"
+for backup_file in "$final_dir"/*; do
+  dd if="$backup_file" of="$secondary_target/$(basename "$backup_file")" \
+    conv=fsync status=none
+done
 echo "$final_dir"

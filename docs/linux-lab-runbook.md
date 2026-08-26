@@ -125,15 +125,23 @@ sudo journalctl -u nihongo-quiz-backup.service --since today
 sudo -u nihongo-quiz /srv/nihongo-quiz/current/deploy/scripts/backup.sh before-open
 ```
 
+Linux 主备份目录强制使用 `0700`。复制到 E 盘 NTFS 忽略目录时，DrvFs 可能不支持
+POSIX `chmod`；脚本会明确告警并继续，副本访问边界由 Windows ACL 负责。
+Linux 内的环境、媒体、备份和恢复目录使用 `0700`，应用与备份服务使用
+`UMask=0077`。只有发布源码和 `collectstatic` 产物向 Caddy 保留只读遍历权限。
+
 每份备份包含数据库自定义格式转储、私密媒体、发布版本、迁移列表和 SHA-256。密钥不进入备份。脚本还必须把备份复制到 E 盘私密目录，否则返回失败。
 
 恢复演练只能写入以 `_restorecheck` 结尾的新数据库：
 
 ```bash
-sudo -u nihongo-quiz /srv/nihongo-quiz/current/deploy/scripts/restore-check.sh \
+sudo /srv/nihongo-quiz/current/deploy/scripts/restore-check.sh \
   /srv/nihongo-quiz/backups/before-open-<timestamp> \
   nihongo_quiz_restorecheck
 ```
+
+脚本只允许 root 执行，由本机 `postgres` 角色创建隔离数据库并把所有者设为应用角色；
+应用运行账号本身不获得 `CREATEDB` 权限。
 
 恢复成功后核对迁移、虚构参与者数量、答题数量、题图和身份解密，再人工删除恢复检查数据库。
 

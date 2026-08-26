@@ -5,6 +5,10 @@ if [[ $# -ne 2 ]]; then
   echo "usage: $0 BACKUP_DIRECTORY TARGET_DATABASE" >&2
   exit 2
 fi
+if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
+  echo "run this restore rehearsal as root; the application role cannot create databases" >&2
+  exit 2
+fi
 
 backup_dir=$(realpath "$1")
 target_db=$2
@@ -27,7 +31,7 @@ if psql --host="$POSTGRES_HOST" --port="$POSTGRES_PORT" --username="$POSTGRES_US
   exit 1
 fi
 
-createdb --host="$POSTGRES_HOST" --port="$POSTGRES_PORT" --username="$POSTGRES_USER" "$target_db"
+runuser -u postgres -- createdb --owner="$POSTGRES_USER" --port="$POSTGRES_PORT" "$target_db"
 pg_restore \
   --exit-on-error \
   --no-owner \
@@ -43,6 +47,7 @@ if [[ -e "$media_check" ]]; then
   echo "media restore target already exists: $media_check" >&2
   exit 1
 fi
-install -d -m 0700 "$media_check"
-tar -C "$media_check" -xzf "$backup_dir/media.tar.gz"
+install -d -o nihongo-quiz -g nihongo-quiz -m 0700 "$media_check"
+runuser -u nihongo-quiz -- tar -C "$media_check" -xzf "$backup_dir/media.tar.gz"
+chmod -R go-rwx "$media_check"
 echo "restored database=$target_db media=$media_check"

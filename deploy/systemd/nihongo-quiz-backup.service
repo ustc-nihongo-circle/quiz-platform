@@ -6,6 +6,7 @@ After=postgresql.service
 Type=oneshot
 User=nihongo-quiz
 Group=nihongo-quiz
+UMask=0077
 WorkingDirectory=/srv/nihongo-quiz/current
 EnvironmentFile=/srv/nihongo-quiz/shared/env/production.env
 ExecStart=/srv/nihongo-quiz/current/deploy/scripts/backup.sh daily
