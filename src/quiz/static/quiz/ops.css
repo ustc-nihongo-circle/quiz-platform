@@ -158,6 +158,7 @@ th { background: var(--cyan-light); }
 
 .audit-list { display: grid; gap: 8px; max-height: 440px; overflow: auto; }
 .audit-list article { display: grid; grid-template-columns: 100px minmax(150px, .7fr) minmax(100px, .5fr) minmax(220px, 2fr); gap: 10px; padding: 9px; border-bottom: 1px solid #aebbd0; }
+.audit-list strong, .audit-list span { min-width: 0; overflow-wrap: anywhere; }
 .audit-list p { margin: 0; }
 
 #toast {
