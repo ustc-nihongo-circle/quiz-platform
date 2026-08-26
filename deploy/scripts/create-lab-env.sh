@@ -30,7 +30,7 @@ printf '%s\n' \
   "POSTGRES_PASSWORD=$db_password" \
   'POSTGRES_HOST=127.0.0.1' \
   'POSTGRES_PORT=5432' \
-  "QUIZ_IDENTITY_KEYS={\"v1\":\"$identity_key\"}" \
+  "QUIZ_IDENTITY_KEYS='{\"v1\":\"$identity_key\"}'" \
   'QUIZ_IDENTITY_ACTIVE_KEY_ID=v1' \
   "QUIZ_IDENTITY_HMAC_KEY=$hmac_key" \
   'QUIZ_SECONDARY_BACKUP_DIR=/mnt/e/Program-personal/Repository/ustc-nihongo-quiz/_private/deployment-local/backups' \
