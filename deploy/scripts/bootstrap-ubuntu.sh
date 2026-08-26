@@ -60,13 +60,18 @@ if [[ "$POSTGRES_DB" != "nihongo_quiz" || "$POSTGRES_USER" != "nihongo_quiz" ]];
   exit 1
 fi
 
-sudo -u postgres psql --set=app_password="$POSTGRES_PASSWORD" <<'SQL'
-SELECT format('CREATE ROLE nihongo_quiz LOGIN PASSWORD %L', :'app_password')
-WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nihongo_quiz')\gexec
-ALTER ROLE nihongo_quiz PASSWORD :'app_password';
-SELECT 'CREATE DATABASE nihongo_quiz OWNER nihongo_quiz'
-WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'nihongo_quiz')\gexec
-SQL
+if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname = 'nihongo_quiz'" | grep -qx 1; then
+  sudo -u postgres psql -v ON_ERROR_STOP=1 -c 'CREATE ROLE nihongo_quiz LOGIN'
+fi
+if [[ ! "$POSTGRES_PASSWORD" =~ ^[0-9a-fA-F]{64}$ ]]; then
+  echo "the generated lab database password must be 64 hexadecimal characters" >&2
+  exit 1
+fi
+printf "ALTER ROLE nihongo_quiz PASSWORD '%s';\n" "$POSTGRES_PASSWORD" \
+  | sudo -u postgres psql -v ON_ERROR_STOP=1
+if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname = 'nihongo_quiz'" | grep -qx 1; then
+  sudo -u postgres createdb --owner=nihongo_quiz nihongo_quiz
+fi
 
 install -m 0644 "$deploy_root/systemd/nihongo-quiz.service" /etc/systemd/system/nihongo-quiz.service
 install -m 0644 "$deploy_root/systemd/nihongo-quiz-backup.service" /etc/systemd/system/nihongo-quiz-backup.service

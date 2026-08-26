@@ -53,6 +53,8 @@ sudo ./deploy/scripts/bootstrap-ubuntu.sh
 
 再次运行 `bootstrap-ubuntu.sh`。脚本会建立数据库、systemd unit 和本地 Caddy 配置。
 
+Docker Desktop 已占用 Windows 的 5432 时，Ubuntu 的 PostgreSQL 集群可能自动选择 5433。`create-lab-env.sh` 会从 `pg_lsclusters` 读取实际端口，不要手工假定为 5432。
+
 ## 3. 构建和安装发布包
 
 发布包只允许从干净提交生成：

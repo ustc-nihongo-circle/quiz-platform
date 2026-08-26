@@ -9,9 +9,14 @@ fi
 umask 077
 env_file=/srv/nihongo-quiz/shared/env/production.env
 django_secret=$(openssl rand -base64 48 | tr -d '\n')
-db_password=$(openssl rand -base64 32 | tr -d '\n')
+db_password=$(openssl rand -hex 32)
 identity_key=$(openssl rand -base64 32 | tr -d '\n')
 hmac_key=$(openssl rand -base64 32 | tr -d '\n')
+pg_port=$(pg_lsclusters --no-header | awk '$1 == "18" && $2 == "main" { print $3; exit }')
+if [[ -z "$pg_port" ]]; then
+  echo "PostgreSQL 18/main cluster is not available" >&2
+  exit 1
+fi
 
 printf '%s\n' \
   'DJANGO_DEBUG=0' \
@@ -29,7 +34,7 @@ printf '%s\n' \
   'POSTGRES_USER=nihongo_quiz' \
   "POSTGRES_PASSWORD=$db_password" \
   'POSTGRES_HOST=127.0.0.1' \
-  'POSTGRES_PORT=5432' \
+  "POSTGRES_PORT=$pg_port" \
   "QUIZ_IDENTITY_KEYS='{\"v1\":\"$identity_key\"}'" \
   'QUIZ_IDENTITY_ACTIVE_KEY_ID=v1' \
   "QUIZ_IDENTITY_HMAC_KEY=$hmac_key" \
