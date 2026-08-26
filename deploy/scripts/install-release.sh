@@ -46,9 +46,12 @@ source "$env_file"
 set +a
 
 cd "$release_dir"
-runuser -u nihongo-quiz -- "$release_dir/.venv/bin/python" manage.py check
-runuser -u nihongo-quiz -- "$release_dir/.venv/bin/python" manage.py migrate --noinput
-runuser -u nihongo-quiz -- "$release_dir/.venv/bin/python" manage.py collectstatic --noinput --clear
+runuser -u nihongo-quiz -- env PYTHONPATH="$release_dir/src" \
+  "$release_dir/.venv/bin/python" manage.py check
+runuser -u nihongo-quiz -- env PYTHONPATH="$release_dir/src" \
+  "$release_dir/.venv/bin/python" manage.py migrate --noinput
+runuser -u nihongo-quiz -- env PYTHONPATH="$release_dir/src" \
+  "$release_dir/.venv/bin/python" manage.py collectstatic --noinput --clear
 
 ln -sfn "$release_dir" "$app_root/current.next"
 mv -Tf "$app_root/current.next" "$app_root/current"
