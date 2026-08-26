@@ -15,7 +15,13 @@ from django.core.validators import validate_email
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
-from .models import AdminAuditLog, Participant, ParticipantIdentity
+from .models import (
+    ActivityEdition,
+    ActivityStatus,
+    AdminAuditLog,
+    Participant,
+    ParticipantIdentity,
+)
 
 
 class IdentityConfigurationError(ImproperlyConfigured):
@@ -196,6 +202,7 @@ def register_or_resume(
     )
 
     with transaction.atomic():
+        activity = ActivityEdition.objects.select_for_update().get(pk=activity.pk)
         existing = (
             ParticipantIdentity.objects.select_related("participant")
             .select_for_update()
@@ -206,6 +213,10 @@ def register_or_resume(
             return _result_for_existing(
                 existing,
                 contact_digest=contact_digest,
+            )
+        if activity.status != ActivityStatus.OPEN:
+            raise ParticipantRecoveryRequired(
+                "Only an existing participant can enter while the activity is not open."
             )
 
         try:

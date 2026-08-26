@@ -34,6 +34,7 @@ from quiz.models import (
     QuizAttempt,
     ReviewStatus,
 )
+from quiz.services import select_participant_entry, transition_activity
 
 
 @pytest.fixture
@@ -46,8 +47,79 @@ def protector():
 
 
 @pytest.mark.django_db
+def test_operator_can_select_one_participant_entry_with_an_audit_record():
+    actor = get_user_model().objects.create_user(username="operator")
+    previous = ActivityEdition.objects.create(
+        slug="autumn-2026",
+        title="2026 秋季游园会",
+        status=ActivityStatus.CLOSED,
+        is_participant_entry=True,
+    )
+    candidate = ActivityEdition.objects.create(
+        slug="spring-2027",
+        title="2027 春季游园会",
+        status=ActivityStatus.DRAFT,
+    )
+
+    selected = select_participant_entry(
+        activity=candidate,
+        actor=actor,
+        reason="筹备下一届入口",
+    )
+
+    previous.refresh_from_db()
+    assert selected.is_participant_entry is True
+    assert previous.is_participant_entry is False
+    audit = AdminAuditLog.objects.get(action="participant_entry_selected")
+    assert audit.actor == actor
+    assert audit.activity == candidate
+    assert audit.reason == "筹备下一届入口"
+
+
+@pytest.mark.django_db
+def test_only_the_selected_participant_entry_can_open():
+    actor = get_user_model().objects.create_user(username="operator")
+    activity = ActivityEdition.objects.create(
+        slug="autumn-2026",
+        title="2026 秋季游园会",
+        status=ActivityStatus.DRAFT,
+    )
+
+    with pytest.raises(ValidationError, match="参与者入口"):
+        transition_activity(
+            activity=activity,
+            next_status=ActivityStatus.OPEN,
+            actor=actor,
+            reason="开放现场入口",
+        )
+
+
+@pytest.mark.django_db
+def test_archiving_the_participant_entry_clears_the_public_selection():
+    actor = get_user_model().objects.create_user(username="operator")
+    activity = ActivityEdition.objects.create(
+        slug="autumn-2026",
+        title="2026 秋季游园会",
+        status=ActivityStatus.CLOSED,
+        is_participant_entry=True,
+    )
+
+    archived = transition_activity(
+        activity=activity,
+        next_status=ActivityStatus.ARCHIVED,
+        actor=actor,
+        reason="活动资料已经封存",
+    )
+
+    assert archived.status == ActivityStatus.ARCHIVED
+    assert archived.is_participant_entry is False
+
+
+@pytest.mark.django_db
 def test_participant_can_resume_with_normalized_identifier_and_contact(protector):
-    activity = ActivityEdition.objects.create(slug="autumn-2026", title="2026 秋季游园会")
+    activity = ActivityEdition.objects.create(
+        slug="autumn-2026", title="2026 秋季游园会", status=ActivityStatus.OPEN
+    )
 
     first = register_or_resume(
         activity=activity,
@@ -92,7 +164,9 @@ def test_identity_digest_isolated_between_activities(protector):
 
 @pytest.mark.django_db
 def test_identity_envelopes_can_be_rotated_without_changing_plaintext(protector):
-    activity = ActivityEdition.objects.create(slug="autumn-2026", title="2026 秋季游园会")
+    activity = ActivityEdition.objects.create(
+        slug="autumn-2026", title="2026 秋季游园会", status=ActivityStatus.OPEN
+    )
     participant = register_or_resume(
         activity=activity,
         display_name="Yuriko",
@@ -121,7 +195,9 @@ def test_identity_envelopes_can_be_rotated_without_changing_plaintext(protector)
 
 @pytest.mark.django_db
 def test_rotate_identity_keys_command_uses_the_active_environment_key(protector, monkeypatch):
-    activity = ActivityEdition.objects.create(slug="autumn-2026", title="2026 秋季游园会")
+    activity = ActivityEdition.objects.create(
+        slug="autumn-2026", title="2026 秋季游园会", status=ActivityStatus.OPEN
+    )
     identity = register_or_resume(
         activity=activity,
         display_name="Yuriko",
@@ -162,7 +238,9 @@ def test_contact_and_identifier_normalization():
 
 @pytest.mark.django_db
 def test_existing_identifier_with_different_contact_requires_recovery(protector):
-    activity = ActivityEdition.objects.create(slug="autumn-2026", title="2026 秋季游园会")
+    activity = ActivityEdition.objects.create(
+        slug="autumn-2026", title="2026 秋季游园会", status=ActivityStatus.OPEN
+    )
     register_or_resume(
         activity=activity,
         display_name="Yuriko",
@@ -183,7 +261,9 @@ def test_existing_identifier_with_different_contact_requires_recovery(protector)
 
 @pytest.mark.django_db
 def test_deidentification_removes_identity_but_keeps_participant_and_audit_fact(protector):
-    activity = ActivityEdition.objects.create(slug="autumn-2026", title="2026 秋季游园会")
+    activity = ActivityEdition.objects.create(
+        slug="autumn-2026", title="2026 秋季游园会", status=ActivityStatus.OPEN
+    )
     registration = register_or_resume(
         activity=activity,
         display_name="Yuriko",
@@ -271,7 +351,9 @@ def test_finalized_question_bank_and_its_questions_are_immutable():
 
 @pytest.mark.django_db(transaction=True)
 def test_participant_has_at_most_one_in_progress_attempt(protector):
-    activity = ActivityEdition.objects.create(slug="autumn-2026", title="2026 秋季游园会")
+    activity = ActivityEdition.objects.create(
+        slug="autumn-2026", title="2026 秋季游园会", status=ActivityStatus.OPEN
+    )
     category = ActivityCategoryConfig.objects.create(
         activity=activity,
         category_key="language",

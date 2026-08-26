@@ -1,0 +1,20 @@
+{% load static %}<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>管理员登录</title>
+  <link rel="stylesheet" href="{% static 'quiz/ops.css' %}">
+</head>
+<body class="login-shell">
+  <main class="login-card">
+    <p class="eyebrow">USTC NIHONGO QUIZ / OPS</p>
+    <h1>现场管理控制台</h1>
+    <form method="post">
+      {% csrf_token %}
+      {{ form.as_p }}
+      <button class="button" type="submit">登录</button>
+    </form>
+  </main>
+</body>
+</html>

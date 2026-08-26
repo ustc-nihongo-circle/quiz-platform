@@ -1,14 +1,16 @@
 import json
 from collections.abc import Mapping
+from pathlib import Path
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.http import FileResponse, Http404, HttpRequest, HttpResponse, JsonResponse
 from django.views.csrf import csrf_failure as default_csrf_failure
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_http_methods
 
 from .identity import ParticipantRecoveryRequired, register_or_resume
-from .models import ActivityEdition, ActivityStatus, Participant, QuizAttempt
+from .models import ActivityEdition, ActivityStatus, AttemptItem, Participant, QuizAttempt
 from .services import (
     ActivityNotOpen,
     AttemptExpired,
@@ -54,11 +56,9 @@ def csrf_failure(request: HttpRequest, reason=""):
 
 
 def current_activity() -> ActivityEdition | None:
-    return (
-        ActivityEdition.objects.exclude(status=ActivityStatus.ARCHIVED)
-        .order_by("-updated_at", "-created_at")
-        .first()
-    )
+    return ActivityEdition.objects.filter(
+        is_participant_entry=True,
+    ).exclude(status=ActivityStatus.ARCHIVED).first()
 
 
 def parse_json_object(request: HttpRequest) -> dict[str, object]:
@@ -124,7 +124,11 @@ def participant_session(request: HttpRequest) -> JsonResponse:
         return HttpResponse(status=204)
 
     activity = current_activity()
-    if activity is None or activity.status not in {ActivityStatus.OPEN, ActivityStatus.PAUSED}:
+    if activity is None or activity.status not in {
+        ActivityStatus.OPEN,
+        ActivityStatus.PAUSED,
+        ActivityStatus.CLOSED,
+    }:
         return api_error("activity_unavailable", "当前活动不接受参与者进入。", status=409)
     try:
         payload = parse_json_object(request)
@@ -208,6 +212,38 @@ def attempt_detail(request: HttpRequest, attempt_id) -> JsonResponse:
         return api_error("attempt_not_found", "未找到答题记录。", status=404)
     attempt = refresh_attempt_timeout(attempt)
     return JsonResponse({"attempt": serialize_attempt(attempt)})
+
+
+@require_GET
+def attempt_item_image(request: HttpRequest, attempt_id, item_id):
+    participant = session_participant(request)
+    if participant is None:
+        raise Http404
+    item = (
+        AttemptItem.objects.select_related("attempt__bank", "question")
+        .prefetch_related("question__assets")
+        .filter(
+            pk=item_id,
+            attempt_id=attempt_id,
+            attempt__participant=participant,
+        )
+        .first()
+    )
+    if item is None:
+        raise Http404
+    asset = item.question.assets.first()
+    if asset is None:
+        raise Http404
+
+    media_root = (
+        Path(settings.MEDIA_ROOT) / "question-banks" / item.attempt.bank.version_code
+    ).resolve()
+    path = (media_root / asset.relative_path).resolve()
+    if not path.is_relative_to(media_root) or not path.is_file():
+        raise Http404
+    response = FileResponse(path.open("rb"), content_type=asset.mime_type)
+    response["Cache-Control"] = "private, no-store"
+    return response
 
 
 @require_http_methods(["PUT"])

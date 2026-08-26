@@ -15,6 +15,7 @@ from django.utils import timezone
 from .models import (
     ActivityBankActivation,
     ActivityCategoryConfig,
+    ActivityEdition,
     ActivityStatus,
     AdminAuditLog,
     AttemptItem,
@@ -52,6 +53,141 @@ class AttemptInvalidated(QuizStateError):
 
 class ActivityMustBePaused(QuizStateError):
     code = "activity_must_be_paused"
+
+
+@transaction.atomic
+def select_participant_entry(*, activity: ActivityEdition, actor, reason: str) -> ActivityEdition:
+    """Select the single activity shown at the participant entry point."""
+    reason = reason.strip()
+    if not reason:
+        raise ValidationError("指定参与者入口届次必须填写原因。")
+
+    # Lock all editions in stable order so concurrent selections cannot both
+    # observe an empty current selection.
+    list(
+        ActivityEdition.objects.select_for_update()
+        .order_by("pk")
+        .values_list("pk", flat=True)
+    )
+    candidate = ActivityEdition.objects.get(pk=activity.pk)
+    if candidate.status == ActivityStatus.ARCHIVED:
+        raise ValidationError("封存届次不能作为参与者入口。")
+
+    current = ActivityEdition.objects.filter(is_participant_entry=True).first()
+    if current and current.pk != candidate.pk:
+        if current.status in {ActivityStatus.OPEN, ActivityStatus.PAUSED}:
+            raise ValidationError("开放或暂停中的入口届次必须先关闭。")
+        current.is_participant_entry = False
+        current.save(update_fields=("is_participant_entry", "updated_at"))
+
+    if not candidate.is_participant_entry:
+        candidate.is_participant_entry = True
+        candidate.save(update_fields=("is_participant_entry", "updated_at"))
+
+    AdminAuditLog.objects.create(
+        actor=actor,
+        activity=candidate,
+        action="participant_entry_selected",
+        reason=reason,
+        metadata={"previous_activity_id": str(current.pk) if current else None},
+    )
+    return candidate
+
+
+@transaction.atomic
+def create_reward_rule(
+    *,
+    activity: ActivityEdition,
+    category: ActivityCategoryConfig | None,
+    min_score_rate: Decimal,
+    max_score_rate: Decimal,
+    priority: int,
+    text: str,
+    actor,
+    reason: str,
+) -> RewardRule:
+    reason = reason.strip()
+    if not reason:
+        raise ValidationError("维护兑奖词必须填写原因。")
+    activity = ActivityEdition.objects.select_for_update().get(pk=activity.pk)
+    rule = RewardRule(
+        activity=activity,
+        category_config=category,
+        min_score_rate=min_score_rate,
+        max_score_rate=max_score_rate,
+        priority=priority,
+        text=text.strip(),
+        is_active=True,
+    )
+    rule.full_clean()
+    rule.save()
+    AdminAuditLog.objects.create(
+        actor=actor,
+        activity=activity,
+        action="reward_rule_created",
+        reason=reason,
+        metadata={"reward_rule_id": rule.pk},
+    )
+    return rule
+
+
+@transaction.atomic
+def deactivate_reward_rule(*, rule: RewardRule, actor, reason: str) -> RewardRule:
+    reason = reason.strip()
+    if not reason:
+        raise ValidationError("停用兑奖词必须填写原因。")
+    rule = RewardRule.objects.select_for_update().select_related("activity").get(pk=rule.pk)
+    rule.is_active = False
+    rule.save(update_fields=("is_active",))
+    AdminAuditLog.objects.create(
+        actor=actor,
+        activity=rule.activity,
+        action="reward_rule_deactivated",
+        reason=reason,
+        metadata={"reward_rule_id": rule.pk},
+    )
+    return rule
+
+
+@transaction.atomic
+def update_reward_rule(
+    *,
+    rule: RewardRule,
+    category: ActivityCategoryConfig | None,
+    min_score_rate: Decimal,
+    max_score_rate: Decimal,
+    priority: int,
+    text: str,
+    actor,
+    reason: str,
+) -> RewardRule:
+    reason = reason.strip()
+    if not reason:
+        raise ValidationError("修改兑奖词必须填写原因。")
+    rule = RewardRule.objects.select_for_update().select_related("activity").get(pk=rule.pk)
+    rule.category_config = category
+    rule.min_score_rate = min_score_rate
+    rule.max_score_rate = max_score_rate
+    rule.priority = priority
+    rule.text = text.strip()
+    rule.full_clean()
+    rule.save(
+        update_fields=(
+            "category_config",
+            "min_score_rate",
+            "max_score_rate",
+            "priority",
+            "text",
+        )
+    )
+    AdminAuditLog.objects.create(
+        actor=actor,
+        activity=rule.activity,
+        action="reward_rule_updated",
+        reason=reason,
+        metadata={"reward_rule_id": rule.pk},
+    )
+    return rule
 
 
 @dataclass(frozen=True)
@@ -157,14 +293,24 @@ def transition_activity(*, activity, next_status: str, actor, reason: str):
     if not reason:
         raise ValidationError("切换活动状态必须填写原因。")
     activity = type(activity).objects.select_for_update().get(pk=activity.pk)
+    if next_status == ActivityStatus.OPEN and not activity.is_participant_entry:
+        raise ValidationError("只有参与者入口届次可以开放。")
     previous_status = activity.status
     activity.transition_to(next_status)
+    entry_cleared = next_status == ActivityStatus.ARCHIVED and activity.is_participant_entry
+    if entry_cleared:
+        activity.is_participant_entry = False
+        activity.save(update_fields=("is_participant_entry", "updated_at"))
     AdminAuditLog.objects.create(
         actor=actor,
         activity=activity,
         action="activity_status_changed",
         reason=reason,
-        metadata={"from": previous_status, "to": next_status},
+        metadata={
+            "from": previous_status,
+            "to": next_status,
+            "participant_entry_cleared": entry_cleared,
+        },
     )
     return activity
 
@@ -179,10 +325,11 @@ def start_attempt(
 ) -> AttemptStartResult:
     now = now or timezone.now()
     rng = rng or random.SystemRandom()
-    participant = Participant.objects.select_for_update().select_related("activity").get(
-        pk=participant.pk
+    activity = ActivityEdition.objects.select_for_update().get(pk=participant.activity_id)
+    participant = Participant.objects.select_for_update().get(
+        pk=participant.pk,
+        activity=activity,
     )
-    activity = participant.activity
     existing = (
         QuizAttempt.objects.select_for_update()
         .filter(participant=participant, status=AttemptStatus.IN_PROGRESS)
@@ -494,7 +641,7 @@ def serialize_attempt(attempt: QuizAttempt) -> dict[str, Any]:
             "prompt": question.prompt,
             "type": question.question_type,
             "image_url": (
-                f"/media/question-banks/{attempt.bank.version_code}/{asset.relative_path}"
+                f"/api/v1/attempts/{attempt.pk}/items/{item.pk}/image"
                 if asset
                 else None
             ),

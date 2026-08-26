@@ -10,7 +10,7 @@ from quiz.models import (
     PoolQuota,
     QuestionBankVersion,
 )
-from quiz.services import activate_question_bank, transition_activity
+from quiz.services import activate_question_bank, select_participant_entry, transition_activity
 
 LEGACY_CATEGORY_TITLES = {
     "history": "历史",
@@ -103,6 +103,11 @@ class Command(BaseCommand):
         except ValidationError as error:
             raise CommandError("; ".join(error.messages)) from error
         if options["open"]:
+            activity = select_participant_entry(
+                activity=activity,
+                actor=actor,
+                reason="创建活动时指定参与者入口",
+            )
             activity = transition_activity(
                 activity=activity,
                 next_status=ActivityStatus.OPEN,

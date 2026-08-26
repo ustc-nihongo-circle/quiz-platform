@@ -12,7 +12,10 @@ def debug_media(request, path):
     return serve(request, path, document_root=settings.MEDIA_ROOT, show_indexes=False)
 
 urlpatterns = [
-    path("admin/", admin.site.urls),
     path("media/<path:path>", debug_media),
+    path("ops/", include("quiz.ops_urls")),
     path("", include("quiz.urls")),
 ]
+
+if settings.DEBUG:
+    urlpatterns.insert(0, path("admin/", admin.site.urls))

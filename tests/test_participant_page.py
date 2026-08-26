@@ -37,6 +37,7 @@ def test_participant_page_bootstraps_only_non_sensitive_session_identity(client)
         slug="frontend-page-test",
         title="前端页面测试",
         status=ActivityStatus.OPEN,
+        is_participant_entry=True,
     )
     client.post(
         "/api/v1/participant-session",

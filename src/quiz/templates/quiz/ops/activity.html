@@ -1,0 +1,187 @@
+{% load static %}<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <title>{{ activity.title }} · 现场管理控制台</title>
+  <link rel="stylesheet" href="{% static 'quiz/ops.css' %}">
+</head>
+<body data-activity-id="{{ activity.pk }}">
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">USTC NIHONGO QUIZ / OPS</p>
+      <h1>现场管理控制台</h1>
+    </div>
+    <form method="post" action="{% url 'ops-logout' %}">
+      {% csrf_token %}
+      <button class="button secondary" type="submit">退出</button>
+    </form>
+  </header>
+
+  <div class="layout">
+    <nav class="activity-nav" aria-label="活动届次">
+      <h2>活动届次</h2>
+      {% for item in activities %}
+        <a href="{% url 'ops-activity-console' item.pk %}"{% if item.pk == activity.pk %} aria-current="page"{% endif %}>
+          <span>{{ item.title }}</span>
+          <small>{{ item.get_status_display }}{% if item.is_participant_entry %} · 参与者入口{% endif %}</small>
+        </a>
+      {% endfor %}
+    </nav>
+
+    <main class="console">
+      <section class="window hero-window">
+        <div class="window-titlebar">
+          <span>{{ activity.title }}</span>
+          <span class="status-chip status-{{ activity.status }}">{{ activity.get_status_display }}</span>
+        </div>
+        <div class="window-body summary-grid" id="activitySummary" data-snapshot-url="{% url 'ops-activity-snapshot' activity.pk %}">
+          <article><strong data-metric="participants">0</strong><span>参与者</span></article>
+          <article><strong data-metric="in_progress">0</strong><span>进行中</span></article>
+          <article><strong data-metric="submitted">0</strong><span>已提交</span></article>
+          <article><strong data-metric="timed_out">0</strong><span>已超时</span></article>
+          <article><strong data-metric="invalid">0</strong><span>已作废</span></article>
+        </div>
+      </section>
+
+      <section class="window" id="activityControls">
+        <div class="window-titlebar"><span>活动控制</span></div>
+        <div class="window-body action-grid">
+          {% if not activity.is_participant_entry %}
+            <form class="ajax-form" method="post" action="{% url 'ops-participant-entry-select' activity.pk %}">
+              {% csrf_token %}
+              <label>指定为参与者入口
+                <input name="reason" required placeholder="填写切换原因">
+              </label>
+              <button class="button" type="submit">指定入口</button>
+            </form>
+          {% endif %}
+          {% for status, label in status_actions %}
+            <form class="ajax-form" method="post" action="{% url 'ops-activity-status' activity.pk %}">
+              {% csrf_token %}
+              <input type="hidden" name="status" value="{{ status }}">
+              <label>{{ label }}
+                <input name="reason" required placeholder="填写操作原因">
+              </label>
+              <button class="button{% if status == 'closed' or status == 'archived' %} danger{% endif %}" type="submit">{{ label }}</button>
+            </form>
+          {% endfor %}
+          <form class="ajax-form" method="post" action="{% url 'ops-question-bank-switch' activity.pk %}">
+            {% csrf_token %}
+            <label>题库版本
+              <select name="bank_version" required>
+                {% for bank in available_banks %}
+                  <option value="{{ bank.version_code }}"{% if current_activation and current_activation.bank_id == bank.pk %} selected{% endif %}>{{ bank.version_code }} · {{ bank.title }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>切换原因<input name="reason" required></label>
+            <label class="check"><input type="checkbox" name="legacy_exception" value="1"> 使用往届私密例外</label>
+            <button class="button" type="submit">切换题库</button>
+          </form>
+        </div>
+      </section>
+
+      <section class="window" id="participantPanel">
+        <div class="window-titlebar"><span>参与者检索</span></div>
+        <div class="window-body">
+          <form id="participantSearch" class="search-grid" method="post" action="{% url 'ops-participant-search' activity.pk %}">
+            {% csrf_token %}
+            <label>显示名<input name="display_name" autocomplete="off"></label>
+            <label>编号精确匹配<input name="identifier" autocomplete="off"></label>
+            <label>联系方式精确匹配<input name="contact" autocomplete="off"></label>
+            <label>内部参与者 ID<input name="participant_id" autocomplete="off"></label>
+            <button class="button" type="submit">检索</button>
+          </form>
+          <div class="toolbar">
+            <button class="button secondary" type="button" data-reveal="identifier">显示完整编号</button>
+            <button class="button secondary" type="button" data-reveal="contact">显示完整联系方式</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>选择</th><th>显示名</th><th>编号</th><th>联系方式</th><th>操作</th></tr></thead>
+              <tbody id="participantRows">
+                {% for participant in participants %}
+                  <tr data-participant-id="{{ participant.id }}">
+                    <td><input type="checkbox" class="participant-select" checked aria-label="选择 {{ participant.display_name }}"></td>
+                    <td>{{ participant.display_name }}</td>
+                    <td data-field="identifier">{{ participant.identifier }}</td>
+                    <td data-field="contact">{{ participant.contact }}</td>
+                    <td>
+                      <button class="link-button" type="button" data-deidentify-url="{% url 'ops-participant-deidentify' participant.id %}">去身份化</button>
+                    </td>
+                  </tr>
+                {% empty %}
+                  <tr><td colspan="5">暂无参与者。</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          <div class="export-grid">
+            <form method="post" action="{% url 'ops-statistics-export' activity.pk %}">{% csrf_token %}<button class="button secondary" type="submit">导出无身份统计</button></form>
+            <form method="post" action="{% url 'ops-identity-export' activity.pk %}">
+              {% csrf_token %}
+              <label>身份导出用途<input name="reason" required></label>
+              <button class="button danger" type="submit">导出身份对应表</button>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <section class="window">
+        <div class="window-titlebar"><span>内部趣味榜</span></div>
+        <div class="window-body">
+          <label>板块
+            <select id="leaderboardCategory" data-url="{% url 'ops-leaderboard' activity.pk %}">
+              {% for category in categories %}<option value="{{ category.category_key }}">{{ category.title }}</option>{% endfor %}
+            </select>
+          </label>
+          <ol id="leaderboardRows" class="leaderboard">
+            {% for row in leaderboard %}<li><b>{{ row.rank }}</b><span>{{ row.display_name }}</span><strong>{{ row.score }}</strong></li>{% empty %}<li>暂无有效成绩。</li>{% endfor %}
+          </ol>
+        </div>
+      </section>
+
+      <section class="window">
+        <div class="window-titlebar"><span>兑奖词</span></div>
+        <div class="window-body two-columns">
+          <form class="ajax-form" method="post" action="{% url 'ops-reward-rule-create' activity.pk %}">
+            {% csrf_token %}
+            <label>板块<select name="category_key"><option value="">全部板块</option>{% for category in categories %}<option value="{{ category.category_key }}">{{ category.title }}</option>{% endfor %}</select></label>
+            <label>最低得分率<input name="min_score_rate" inputmode="decimal" value="0.8000" required></label>
+            <label>最高得分率<input name="max_score_rate" inputmode="decimal" value="1.0000" required></label>
+            <label>优先级<input name="priority" type="number" value="0" required></label>
+            <label>兑奖词<input name="text" required></label>
+            <label>原因<input name="reason" required></label>
+            <button class="button" type="submit">新增兑奖词</button>
+          </form>
+          <ul class="rule-list">
+            {% for rule in reward_rules %}
+              <li class="{% if not rule.is_active %}muted{% endif %}"><strong>{{ rule.text }}</strong><span>{{ rule.min_score_rate }}–{{ rule.max_score_rate }} · 优先级 {{ rule.priority }}</span>{% if rule.is_active %}<button class="link-button" type="button" data-deactivate-rule-url="{% url 'ops-reward-rule-update' rule.pk %}">停用</button>{% endif %}</li>
+            {% empty %}<li>尚未设置兑奖词。</li>{% endfor %}
+          </ul>
+        </div>
+      </section>
+
+      <section class="window">
+        <div class="window-titlebar"><span>最近答题</span></div>
+        <div class="window-body table-wrap">
+          <table><thead><tr><th>答题记录</th><th>板块</th><th>状态</th><th>得分</th><th>操作</th></tr></thead><tbody>
+          {% for attempt in recent_attempts %}<tr><td class="mono">{{ attempt.pk }}</td><td>{{ attempt.category_config.title }}</td><td>{{ attempt.get_status_display }}</td><td>{{ attempt.score }}/{{ attempt.question_count }}</td><td>{% if attempt.status != 'invalid' %}<button class="link-button danger-text" type="button" data-invalidate-url="{% url 'ops-attempt-invalidate' attempt.pk %}">作废</button>{% endif %}</td></tr>{% empty %}<tr><td colspan="5">暂无答题记录。</td></tr>{% endfor %}
+          </tbody></table>
+        </div>
+      </section>
+
+      <section class="window">
+        <div class="window-titlebar"><span>审计日志</span></div>
+        <div class="window-body audit-list">
+          {% for log in audit_logs %}<article><time>{{ log.created_at|date:'m-d H:i:s' }}</time><strong>{{ log.action }}</strong><span>{{ log.actor.username|default:'system' }}</span><p>{{ log.reason }}</p></article>{% empty %}<p>暂无审计记录。</p>{% endfor %}
+        </div>
+      </section>
+    </main>
+  </div>
+  <div id="toast" role="status" aria-live="polite" hidden></div>
+  <script src="{% static 'quiz/ops.js' %}" defer></script>
+</body>
+</html>

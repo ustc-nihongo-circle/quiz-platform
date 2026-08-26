@@ -81,6 +81,8 @@
 
 编号已存在但联系方式不匹配时返回 `participant_recovery_required`。响应不会说明哪一字段存在，也不会回传编号、联系方式、摘要或密文。再次进入不会覆盖首次登记的显示名。
 
+只有 `open` 可以创建新参与者。`paused` 和 `closed` 仍接受已有身份再次进入，未知编号与联系方式不匹配统一返回 `participant_recovery_required`，避免泄露编号是否存在。
+
 ### `DELETE /api/v1/participant-session`
 
 清除当前参与者 Session，成功返回 `204`。
@@ -124,6 +126,8 @@
 ```
 
 题目顺序、选项顺序、板块、题库版本和截止时间由服务端保存。响应不包含正确选项或可接受填空答案。
+
+非空 `image_url` 指向 `/api/v1/attempts/{attempt_id}/items/{item_id}/image`。服务端要求当前参与者 Session 与答题记录一致，并确认题图属于本次抽中的答题项。参与者接口不返回可枚举的题图库目录。
 
 ### `GET /api/v1/attempts/current`
 

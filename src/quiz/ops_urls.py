@@ -1,0 +1,99 @@
+from django.urls import path
+
+from .ops import (
+    OpsLoginView,
+    OpsLogoutView,
+    activity_console,
+    activity_snapshot,
+    activity_status_transition,
+    attempt_detail,
+    attempt_invalidate,
+    dashboard,
+    identity_export,
+    leaderboard,
+    participant_deidentify,
+    participant_entry_select,
+    participant_reveal,
+    participant_search,
+    question_bank_switch,
+    reward_rule_create,
+    reward_rule_update,
+    statistics_export,
+)
+
+urlpatterns = [
+    path("login/", OpsLoginView.as_view(), name="ops-login"),
+    path("logout/", OpsLogoutView.as_view(), name="ops-logout"),
+    path("", dashboard, name="ops-dashboard"),
+    path(
+        "activities/<uuid:activity_id>/",
+        activity_console,
+        name="ops-activity-console",
+    ),
+    path(
+        "activities/<uuid:activity_id>/snapshot/",
+        activity_snapshot,
+        name="ops-activity-snapshot",
+    ),
+    path(
+        "activities/<uuid:activity_id>/participants/search/",
+        participant_search,
+        name="ops-participant-search",
+    ),
+    path(
+        "activities/<uuid:activity_id>/participants/reveal/",
+        participant_reveal,
+        name="ops-participant-reveal",
+    ),
+    path(
+        "activities/<uuid:activity_id>/exports/identities/",
+        identity_export,
+        name="ops-identity-export",
+    ),
+    path(
+        "activities/<uuid:activity_id>/exports/statistics/",
+        statistics_export,
+        name="ops-statistics-export",
+    ),
+    path(
+        "activities/<uuid:activity_id>/participant-entry/",
+        participant_entry_select,
+        name="ops-participant-entry-select",
+    ),
+    path(
+        "activities/<uuid:activity_id>/status/",
+        activity_status_transition,
+        name="ops-activity-status",
+    ),
+    path(
+        "activities/<uuid:activity_id>/question-bank/",
+        question_bank_switch,
+        name="ops-question-bank-switch",
+    ),
+    path(
+        "attempts/<uuid:attempt_id>/invalidate/",
+        attempt_invalidate,
+        name="ops-attempt-invalidate",
+    ),
+    path("attempts/<uuid:attempt_id>/", attempt_detail, name="ops-attempt-detail"),
+    path(
+        "participants/<uuid:participant_id>/deidentify/",
+        participant_deidentify,
+        name="ops-participant-deidentify",
+    ),
+    path(
+        "activities/<uuid:activity_id>/reward-rules/",
+        reward_rule_create,
+        name="ops-reward-rule-create",
+    ),
+    path(
+        "reward-rules/<int:rule_id>/",
+        reward_rule_update,
+        name="ops-reward-rule-update",
+    ),
+    path(
+        "activities/<uuid:activity_id>/leaderboard/",
+        leaderboard,
+        name="ops-leaderboard",
+    ),
+]

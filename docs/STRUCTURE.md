@@ -1,6 +1,6 @@
 # 仓库结构与职责
 
-最后更新：2026-08-25
+最后更新：2026-08-26
 
 ## 根目录
 
@@ -9,11 +9,12 @@
 - `CONTEXT.md` 统一领域术语。
 - `pyproject.toml` 声明 Python 版本、运行依赖和验证工具。
 - `.env.example` 只列配置名称和非敏感示例，不保存真实值。
+- `deploy/` 保存 Ubuntu、systemd、Caddy、发布、备份和恢复模板。
 
 ## 程序与测试
 
 - `src/config/` 保存 Django 配置、URL 和进程入口。
-- `src/quiz/` 保存答题领域模型、身份保护、题库工具、答题服务、JSON 接口、参与者模板、静态资源和管理命令。
+- `src/quiz/` 保存答题领域模型、身份保护、题库工具、答题服务、参与者接口、现场管理控制台、模板、静态资源和管理命令。
 - `tests/` 保存单元、集成、并发和浏览器测试。
 - `content/examples/` 只保存可公开的格式示例与退役题。
 
@@ -22,6 +23,8 @@
 - `docs/PROJECT_PLAN.md` 是当前认可的实施顺序和完成条件。
 - `docs/research-handoff.md` 保存往届包的消敏证据和迁移边界。
 - `docs/frontend-contract.md` 是参与者模板与后端接口之间的正式契约。
+- `docs/ops-console.md` 是现场管理控制台的权限与行为参考。
+- `docs/linux-lab-runbook.md` 是 V 盘 Ubuntu 发布、备份、恢复和拔盘操作手册。
 - `docs/adr/` 保存难以逆转且需要解释的长期决策。
 - `docs/references/current-ui/` 保存不含个人数据的旧界面基线。
 
@@ -34,3 +37,11 @@
 - `docs-agent/` 保存本机 Agent 状态和任务记录。
 
 `_private/` 和 `docs-agent/` 均由 `.gitignore` 从仓库历史中排除。
+
+## 部署与验证工具
+
+- `deploy/systemd/` 保存 Gunicorn 应用和备份 timer 的 unit 模板。
+- `deploy/scripts/` 保存发布安装、回滚、逻辑备份和恢复检查脚本。
+- `deploy/Caddyfile.lab` 只用于本地 `quiz.localhost` HTTPS 演练。
+- `scripts/build-release.ps1` 从干净 Git 提交生成带 SHA-256 清单的发布包。
+- `scripts/check-v-drive.ps1` 只读检查外接盘和 WSL/Docker 状态，不自动脱机磁盘。

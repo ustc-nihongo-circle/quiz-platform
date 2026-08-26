@@ -1,0 +1,16 @@
+[Unit]
+Description=Back up USTC Nihongo Quiz database and private media
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=nihongo-quiz
+Group=nihongo-quiz
+WorkingDirectory=/srv/nihongo-quiz/current
+EnvironmentFile=/srv/nihongo-quiz/shared/env/production.env
+ExecStart=/srv/nihongo-quiz/current/deploy/scripts/backup.sh daily
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/nihongo-quiz/backups /mnt/e/Program-personal/Repository/ustc-nihongo-quiz/_private/deployment-local/backups
+NoNewPrivileges=true

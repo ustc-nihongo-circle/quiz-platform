@@ -1,0 +1,18 @@
+https://quiz.localhost:18443 {
+	tls internal
+	encode zstd gzip
+
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy same-origin
+		-Server
+	}
+
+	handle_path /static/* {
+		root * /srv/nihongo-quiz/current/staticfiles
+		file_server
+	}
+
+	reverse_proxy 127.0.0.1:18080
+}

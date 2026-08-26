@@ -4,6 +4,7 @@ import uuid
 
 import pytest
 from django.contrib.auth import get_user_model
+from django.test import Client
 from django.utils import timezone
 
 from quiz.identity import IdentityProtector, register_or_resume
@@ -14,6 +15,7 @@ from quiz.models import (
     ActivityStatus,
     AdminAuditLog,
     BankQuestion,
+    QuestionAsset,
     QuestionBankVersion,
     QuestionIdentity,
     QuestionType,
@@ -38,6 +40,7 @@ def create_open_quiz():
         slug="autumn-2026",
         title="2026 秋季游园会",
         status=ActivityStatus.OPEN,
+        is_participant_entry=True,
         default_question_count=2,
     )
     ActivityCategoryConfig.objects.create(
@@ -53,7 +56,7 @@ def create_open_quiz():
     )
     for number, answer in ((1, "A"), (2, "B")):
         identity = QuestionIdentity.objects.create(stable_code=f"TEST-{number:04d}")
-        BankQuestion.objects.create(
+        question = BankQuestion.objects.create(
             bank=bank,
             identity=identity,
             category_key="language",
@@ -72,6 +75,14 @@ def create_open_quiz():
             source_reference="test fixture",
             source_license="CC0-1.0",
         )
+        if number == 1:
+            QuestionAsset.objects.create(
+                bank=bank,
+                question=question,
+                relative_path="assets/synthetic-diagram.png",
+                content_sha256="b" * 64,
+                mime_type="image/png",
+            )
     SamplingRule.objects.create(
         bank=bank,
         category_key="language",
@@ -102,6 +113,42 @@ def register(client):
         ),
         content_type="application/json",
     )
+
+
+@pytest.mark.django_db
+def test_question_image_requires_the_participant_session_for_its_attempt(
+    client,
+    settings,
+    tmp_path,
+):
+    settings.MEDIA_ROOT = tmp_path
+    image = (
+        tmp_path
+        / "question-banks"
+        / "2026-autumn-v1"
+        / "assets"
+        / "synthetic-diagram.png"
+    )
+    image.parent.mkdir(parents=True)
+    image.write_bytes(b"synthetic-image")
+    create_open_quiz()
+    assert register(client).status_code == 201
+    started = client.post(
+        "/api/v1/attempts",
+        data=json.dumps({"category_code": "language"}),
+        content_type="application/json",
+    ).json()["attempt"]
+    image_url = next(
+        question["image_url"] for question in started["questions"] if question["image_url"]
+    )
+
+    authorized = client.get(image_url)
+    anonymous = Client().get(image_url)
+
+    assert image_url.startswith(f"/api/v1/attempts/{started['id']}/items/")
+    assert authorized.status_code == 200
+    assert b"".join(authorized.streaming_content) == b"synthetic-image"
+    assert anonymous.status_code == 404
 
 
 @pytest.mark.django_db

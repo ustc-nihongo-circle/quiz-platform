@@ -279,7 +279,7 @@ class MockTransport {
     }
 
     if (path === endpoint.participantSession && method === "POST") {
-      if (this.state.activity.status !== "open") {
+      if (!["open", "paused", "closed"].includes(this.state.activity.status)) {
         throw new ApiError({ code: "activity_unavailable", message: "当前活动不接受参与者进入。", retryable: false }, 409);
       }
       const payload = JSON.parse(options.body || "{}");
@@ -289,6 +289,14 @@ class MockTransport {
         throw new ApiError({
           code: "participant_recovery_required",
           message: "登记信息无法匹配，请联系活动管理员处理。",
+          field_errors: {},
+          retryable: false,
+        }, 409);
+      }
+      if (this.state.activity.status !== "open" && !sameIdentifier) {
+        throw new ApiError({
+          code: "participant_recovery_required",
+          message: "活动当前只允许已登记参与者再次进入。",
           field_errors: {},
           retryable: false,
         }, 409);
@@ -634,15 +642,15 @@ const app = {
 
     const notice = document.getElementById("activityNotice");
     const form = document.getElementById("registrationForm");
-    const registrationAllowed = activity.status === "open";
-    [...form.elements].forEach((control) => { control.disabled = !registrationAllowed; });
-    notice.hidden = registrationAllowed;
-    if (!registrationAllowed) {
+    const entryAllowed = ["open", "paused", "closed"].includes(activity.status);
+    [...form.elements].forEach((control) => { control.disabled = !entryAllowed; });
+    notice.hidden = activity.status === "open";
+    if (activity.status !== "open") {
       notice.textContent = {
         draft: "活动尚未开放，暂时不能登记或开始挑战。",
-        paused: "活动暂时暂停，不能登记或开始新挑战。已有 Session 的进行中答题仍可恢复。",
-        closed: "活动已经关闭，不能登记或开始新挑战。已有 Session 的进行中答题仍可继续到原截止时间。",
-      }[activity.status] || "当前活动不可登记。";
+        paused: "活动暂时暂停，仅允许已登记参与者再次进入并恢复已有答题。",
+        closed: "活动已经关闭，仅允许已登记参与者再次进入、完成原截止时间内的答题或查看结果。",
+      }[activity.status] || "当前活动不可进入。";
     }
   },
 
@@ -792,7 +800,7 @@ const app = {
     } catch (error) {
       this.feedback("registrationFeedback", "error", errorMessage(error), error?.retryable ? () => this.register(form) : null);
     } finally {
-      submit.disabled = this.activity.status !== "open";
+      submit.disabled = !["open", "paused", "closed"].includes(this.activity.status);
       submit.querySelector("span:first-child").textContent = "登记并继续";
     }
   },

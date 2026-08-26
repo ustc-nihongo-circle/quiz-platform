@@ -27,10 +27,12 @@ class ActivityEdition(models.Model):
     )
     default_question_count = models.PositiveSmallIntegerField(default=15)
     default_time_limit_seconds = models.PositiveIntegerField(default=300)
+    is_participant_entry = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
+        permissions = [("operate_quiz", "Can operate the on-site quiz console")]
         constraints = [
             models.CheckConstraint(
                 condition=Q(default_question_count__gt=0),
@@ -39,6 +41,11 @@ class ActivityEdition(models.Model):
             models.CheckConstraint(
                 condition=Q(default_time_limit_seconds__gt=0),
                 name="activity_default_time_limit_positive",
+            ),
+            models.UniqueConstraint(
+                fields=("is_participant_entry",),
+                condition=Q(is_participant_entry=True),
+                name="one_participant_entry_activity",
             ),
         ]
 
@@ -68,6 +75,11 @@ class Participant(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     anonymized_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=("activity", "created_at"), name="participant_activity_created"),
+        ]
 
     def __str__(self) -> str:
         return str(self.pk)
@@ -100,6 +112,9 @@ class ParticipantIdentity(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
+        indexes = [
+            models.Index(fields=("activity", "display_name"), name="identity_activity_display"),
+        ]
         constraints = [
             models.UniqueConstraint(
                 fields=("activity", "identifier_digest"),
@@ -524,6 +539,16 @@ class QuizAttempt(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
+        indexes = [
+            models.Index(
+                fields=("activity", "status", "created_at"),
+                name="attempt_act_status_created",
+            ),
+            models.Index(
+                fields=("activity", "category_config", "status", "submitted_at"),
+                name="attempt_act_cat_status",
+            ),
+        ]
         constraints = [
             models.UniqueConstraint(
                 fields=("participant",),
@@ -622,6 +647,12 @@ class CategoryHighScore(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
+        indexes = [
+            models.Index(
+                fields=("activity", "category_config", "-score", "achieved_at"),
+                name="high_score_activity_category",
+            ),
+        ]
         constraints = [
             models.UniqueConstraint(
                 fields=("participant", "category_config"),
@@ -733,6 +764,10 @@ class AdminAuditLog(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
+        indexes = [
+            models.Index(fields=("activity", "-created_at"), name="audit_activity_created"),
+            models.Index(fields=("participant", "-created_at"), name="audit_participant_created"),
+        ]
         ordering = ("-created_at", "-pk")
 
     def __str__(self) -> str:

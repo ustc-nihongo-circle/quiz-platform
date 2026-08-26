@@ -1,3 +1,4 @@
+from django.db import DatabaseError, connection
 from django.http import JsonResponse
 from django.shortcuts import render
 from django.views.decorators.csrf import ensure_csrf_cookie
@@ -9,6 +10,17 @@ from .services import refresh_attempt_timeout, serialize_attempt
 def health(request):
     """Return a process-level health response without exposing configuration."""
     return JsonResponse({"status": "ok"})
+
+
+def readiness(request):
+    """Return readiness only after a database round trip succeeds."""
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+    except DatabaseError:
+        return JsonResponse({"status": "unavailable", "database": "error"}, status=503)
+    return JsonResponse({"status": "ok", "database": "ok"})
 
 
 @ensure_csrf_cookie

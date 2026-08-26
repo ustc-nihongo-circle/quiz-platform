@@ -410,9 +410,11 @@ def test_create_activity_edition_command_builds_categories_and_opens_activity(
 
     activity = ActivityEdition.objects.get(slug="demo-2026")
     assert activity.status == ActivityStatus.OPEN
+    assert activity.is_participant_entry is True
     assert list(activity.category_configs.values_list("category_key", flat=True)) == ["demo"]
     assert activity.bank_activations.get(is_current=True).bank == imported.version
     assert set(AdminAuditLog.objects.values_list("action", flat=True)) == {
         "question_bank_activated",
+        "participant_entry_selected",
         "activity_status_changed",
     }

@@ -1,0 +1,28 @@
+{% load static %}<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>现场管理控制台</title>
+  <link rel="stylesheet" href="{% static 'quiz/ops.css' %}">
+</head>
+<body>
+  <header>
+    <h1>现场管理控制台</h1>
+    <form method="post" action="{% url 'ops-logout' %}">
+      {% csrf_token %}
+      <button type="submit">退出</button>
+    </form>
+  </header>
+  <main>
+    <h2>活动届次</h2>
+    <ul>
+      {% for activity in activities %}
+        <li><a href="{% url 'ops-activity-console' activity.pk %}">{{ activity.title }} · {{ activity.get_status_display }}</a></li>
+      {% empty %}
+        <li>还没有活动届次。</li>
+      {% endfor %}
+    </ul>
+  </main>
+</body>
+</html>

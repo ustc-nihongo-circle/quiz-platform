@@ -1,0 +1,25 @@
+[Unit]
+Description=USTC Nihongo Quiz Django application
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=notify
+User=nihongo-quiz
+Group=nihongo-quiz
+WorkingDirectory=/srv/nihongo-quiz/current
+EnvironmentFile=/srv/nihongo-quiz/shared/env/production.env
+ExecStart=/srv/nihongo-quiz/current/.venv/bin/gunicorn --workers 3 --bind 127.0.0.1:18080 --access-logfile - --error-logfile - config.wsgi:application
+ExecReload=/bin/kill -s HUP $MAINPID
+KillMode=mixed
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=3
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/nihongo-quiz/shared/media
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
