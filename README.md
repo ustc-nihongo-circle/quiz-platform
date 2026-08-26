@@ -120,7 +120,7 @@ python manage.py export_question_audit_batches `
 - `_private/`：现役题库、未审查材料、部署本地资料和往届参考，不进入 Git。
 - `docs-agent/`：本机 Agent 状态，不进入 Git。
 
-详细职责见 [仓库结构](docs/STRUCTURE.md)，当前实施顺序见 [项目计划](docs/PROJECT_PLAN.md)，往届包证据见 [研究交接](docs/research-handoff.md)。
+详细职责见 [仓库结构](docs/STRUCTURE.md)，当前实施顺序见 [项目计划](docs/PROJECT_PLAN.md)，往届包证据见 [研究交接](docs/research-handoff.md)。本阶段的操作路径、结果和托管待办见 [实施归档](docs/implementation-archive-2026-08-27.md)。
 
 管理员行为见 [现场管理控制台参考](docs/ops-console.md)。V 盘 Linux 演练见 [Ubuntu 预发布手册](docs/linux-lab-runbook.md)。
 

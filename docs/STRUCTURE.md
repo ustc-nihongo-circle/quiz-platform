@@ -25,6 +25,7 @@
 - `docs/frontend-contract.md` 是参与者模板与后端接口之间的正式契约。
 - `docs/ops-console.md` 是现场管理控制台的权限与行为参考。
 - `docs/linux-lab-runbook.md` 是 V 盘 Ubuntu 发布、备份、恢复和拔盘操作手册。
+- `docs/implementation-archive-2026-08-27.md` 归档本阶段实施路线、成果和最终托管待办。
 - `docs/adr/` 保存难以逆转且需要解释的长期决策。
 - `docs/references/current-ui/` 保存不含个人数据的旧界面基线。
 
