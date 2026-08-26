@@ -81,6 +81,11 @@ https://quiz.localhost:18443/
 
 Caddy 使用本地 CA。将 Caddy 根证书导入 Windows 信任存储属于人工步骤。导入前核对证书来自当前 `Ubuntu-Quiz-Lab`，不要信任其他来源的根证书。
 
+本机 Hyper-V WSL 防火墙默认阻止 TCP 入站，且代理 DNS 可能把 `quiz.localhost` 解析为
+`198.18.0.0/15` 的假 IP。当前未创建持久防火墙规则，也未修改 Windows hosts。Ubuntu 内
+可直接使用浏览器；Windows 浏览器访问需要用户另行明确批准一条只允许 TCP 18443 的
+Hyper-V WSL 规则，并处理动态 WSL IP/主机名映射。不要把 WSL 默认入站策略整体改为 Allow。
+
 ## 4. 初始化虚构数据
 
 本地演练只导入 `content/examples/question-bank-v1/`。不得导入往届参与者 CSV、真实联系方式或现役活动数据。
@@ -104,7 +109,8 @@ sudo -u nihongo-quiz .venv/bin/python manage.py changepassword lab-operator
 systemctl status postgresql nihongo-quiz caddy
 curl --fail http://127.0.0.1:18080/health/live/
 curl --fail http://127.0.0.1:18080/health/ready/
-curl --fail --cacert /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt \
+curl --fail --resolve quiz.localhost:18443:127.0.0.1 \
+  --cacert /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt \
   https://quiz.localhost:18443/health/ready/
 ```
 
@@ -173,3 +179,14 @@ wsl --shutdown
 只有预检显示无运行 WSL 和 Docker/WSL 进程后，才通过 Windows 安全删除硬件或把已核对的磁盘脱机。
 
 重新连接后先运行 startup 预检。需要开发数据库时启动 Docker Desktop；需要 Linux 演练时启动 `Ubuntu-Quiz-Lab`。启动后必须重新检查服务和两个健康端点。
+
+## 9. 当前人工接续项
+
+- 创建日常 Linux 管理用户和独立密码，再授予 `sudo`；应用仍由无登录 shell 的
+  `nihongo-quiz` 账号运行。
+- 如需从 Windows 普通浏览器访问，先审阅并明确批准单端口 Hyper-V WSL 防火墙规则，
+  再处理动态地址映射并导入当前 Caddy 根证书；完成后重复三视口验收。
+- 恢复演练数据库和媒体目录保留到人工复核完成。删除前再次核对数据库名必须以
+  `_restorecheck` 结尾，且备份清单仍能通过 SHA-256。
+
+本次完整机器验收证据见 [管理控制台与 Linux 实验验收](validation-ops-lab.md)。

@@ -53,3 +53,5 @@ python manage.py changepassword field-operator
 ## 日志边界
 
 控制台、应用和代理日志不得记录参与者明文身份、题干、答案、请求正文或导出内容。管理员填写原因时也不应复制身份资料。
+
+实现与真实浏览器验收结果见 [管理控制台与 Linux 实验验收](validation-ops-lab.md)。
