@@ -193,6 +193,8 @@ def test_ops_participant_search_returns_masked_identity_by_default(client):
             "contact": "+86*******8000",
             "contact_type": "phone",
             "anonymized": False,
+            "attempt_count": 0,
+            "last_attempt_at": None,
         }
     ]
     body = response.content.decode("utf-8")

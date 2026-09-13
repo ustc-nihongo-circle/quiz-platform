@@ -2,11 +2,20 @@ import csv
 import uuid
 
 from django.core.exceptions import ValidationError
+from django.core.paginator import Paginator
+from django.db.models import Count, F, Max, Q
 
 from .identity import IdentityProtector, normalize_contact, normalize_identifier
 from .models import ActivityEdition, AdminAuditLog, CategoryHighScore, Participant, QuizAttempt
 
 PARTICIPANT_PAGE_SIZE = 50
+PARTICIPANT_SORTS = {
+    "recent": (F("last_attempt_at").desc(nulls_last=True), "-created_at", "pk"),
+    "newest": ("-created_at", "pk"),
+    "oldest": ("created_at", "pk"),
+    "name": ("identity__display_name", "created_at", "pk"),
+    "attempts": ("-attempt_count", "-created_at", "pk"),
+}
 
 
 class CsvEcho:
@@ -45,11 +54,18 @@ def search_participants(
     identifier: str = "",
     contact: str = "",
     participant_id: str = "",
-) -> list[dict[str, object]]:
+    sort: str = "recent",
+    page: str | int = 1,
+) -> dict[str, object]:
+    sort = sort if sort in PARTICIPANT_SORTS else "recent"
     identities = (
         Participant.objects.filter(activity=activity, identity__isnull=False)
         .select_related("identity")
-        .order_by("identity__display_name", "created_at", "pk")
+        .annotate(
+            attempt_count=Count("attempts", filter=Q(attempts__activity=activity)),
+            last_attempt_at=Max("attempts__started_at", filter=Q(attempts__activity=activity)),
+        )
+        .order_by(*PARTICIPANT_SORTS[sort])
     )
     protector = IdentityProtector.from_environment()
     if display_name.strip():
@@ -72,10 +88,13 @@ def search_participants(
         try:
             normalized_participant_id = uuid.UUID(participant_id.strip())
         except ValueError:
-            return []
-        identities = identities.filter(pk=normalized_participant_id)
+            identities = identities.none()
+        else:
+            identities = identities.filter(pk=normalized_participant_id)
+    # Sort the entire matched set before pagination, not just the current 50 rows.
+    result_page = Paginator(identities, PARTICIPANT_PAGE_SIZE).get_page(page)
     rows = []
-    for participant in identities[:PARTICIPANT_PAGE_SIZE]:
+    for participant in result_page:
         identity = participant.identity
         identifier = protector.decrypt(
             identity.identifier_envelope,
@@ -93,9 +112,19 @@ def search_participants(
                 "contact": mask_contact(contact),
                 "contact_type": identity.contact_type,
                 "anonymized": False,
+                "attempt_count": participant.attempt_count,
+                "last_attempt_at": participant.last_attempt_at,
             }
         )
-    return rows
+    return {
+        "participants": rows,
+        "sort": sort,
+        "pagination": {
+            "page": result_page.number,
+            "pages": result_page.paginator.num_pages,
+            "total": result_page.paginator.count,
+        },
+    }
 
 
 def reveal_participant_identities(

@@ -25,7 +25,9 @@ from quiz.models import (
 )
 from quiz.services import (
     ActivityNotOpen,
+    AttemptExpired,
     AttemptInvalidated,
+    expire_stale_attempts,
     invalidate_attempt,
     select_participant_entry,
     start_attempt,
@@ -391,3 +393,100 @@ def test_submission_and_invalidation_converge_on_invalid_without_a_high_score(pr
     assert attempt.status == "invalid"
     assert not CategoryHighScore.objects.filter(participant=participant).exists()
     assert AdminAuditLog.objects.filter(action="attempt_invalidated").count() == 1
+
+
+def test_parallel_expiry_is_idempotent_and_late_submission_cannot_score():
+    activity, _, _ = build_quiz()
+    participant = Participant.objects.create(activity=activity)
+    now = timezone.now()
+    attempt = start_attempt(
+        participant=participant,
+        category_code="demo",
+        now=now - timedelta(minutes=31),
+    ).attempt
+    barrier = Barrier(3)
+
+    def expire():
+        def callback():
+            barrier.wait()
+            return expire_stale_attempts(now=now)
+
+        return _thread_call(callback)
+
+    def submit():
+        def callback():
+            barrier.wait()
+            with pytest.raises(AttemptExpired):
+                submit_attempt(attempt=attempt, participant=participant, answers={}, now=now)
+
+        return _thread_call(callback)
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = [executor.submit(expire), executor.submit(expire), executor.submit(submit)]
+        counts = [future.result() for future in futures]
+    assert sum(counts[:2]) <= 1
+    attempt.refresh_from_db()
+    assert attempt.status == "timed_out"
+    assert not CategoryHighScore.objects.exists()
+    assert AdminAuditLog.objects.filter(action="stale_attempts_expired").count() <= 1
+
+
+def test_cleanup_waiting_for_accepted_submission_preserves_result():
+    from threading import Event
+
+    from django.db import transaction
+
+    activity, _, _ = build_quiz()
+    participant = Participant.objects.create(activity=activity)
+    now = timezone.now()
+    attempt = start_attempt(participant=participant, category_code="demo", now=now).attempt
+    submission_locked = Event()
+    cleanup_started = Event()
+
+    def submit():
+        def callback():
+            with transaction.atomic():
+                QuizAttempt.objects.select_for_update().get(pk=attempt.pk)
+                submit_attempt(attempt=attempt, participant=participant, answers={}, now=now)
+                submission_locked.set()
+                assert cleanup_started.wait(timeout=10)
+
+        return _thread_call(callback)
+
+    def expire():
+        def callback():
+            assert submission_locked.wait(timeout=10)
+            cleanup_started.set()
+            return expire_stale_attempts(now=now + timedelta(minutes=31))
+
+        return _thread_call(callback)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        submitted = executor.submit(submit)
+        expired = executor.submit(expire)
+        submitted.result()
+        assert expired.result() == 0
+    attempt.refresh_from_db()
+    assert attempt.status == "submitted"
+    assert CategoryHighScore.objects.filter(source_attempt=attempt).exists()
+
+
+def test_parallel_workers_cannot_overspend_the_last_tokens():
+    from quiz.rate_limits import Policy, RateLimited, consume_limits
+
+    now = timezone.now()
+    barrier = Barrier(20)
+    policy = Policy("parallel_security", 7, 1, 3600)
+
+    def attempt(_):
+        def callback():
+            barrier.wait()
+            try:
+                consume_limits([(policy, "synthetic", "shared")], now=now)
+                return True
+            except RateLimited:
+                return False
+        return _thread_call(callback)
+
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        assert sum(executor.map(attempt, range(20))) == 7

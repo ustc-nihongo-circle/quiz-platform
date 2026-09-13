@@ -10,9 +10,28 @@ const endpoint = {
   participantSession: `${API_ROOT}/participant-session`,
   attempts: `${API_ROOT}/attempts`,
   currentAttempt: `${API_ROOT}/attempts/current`,
+  history: (page) => `${API_ROOT}/attempts/history?page=${page}`,
   attempt: (attemptId) => `${API_ROOT}/attempts/${attemptId}`,
   submission: (attemptId) => `${API_ROOT}/attempts/${attemptId}/submission`,
 };
+
+function renderQuestionText(target, value) {
+  // Legacy reading questions use exactly this underline annotation. Build DOM
+  // nodes ourselves so question content never becomes executable HTML or CSS.
+  const text = String(value ?? "");
+  const annotation = /<span\s+style=(["'])\s*text-decoration\s*:\s*underline\s*;?\s*\1\s*>([\s\S]*?)<\/span\s*>/gi;
+  const fragment = document.createDocumentFragment();
+  let cursor = 0;
+  for (const match of text.matchAll(annotation)) {
+    fragment.append(document.createTextNode(text.slice(cursor, match.index)));
+    const underline = document.createElement("u");
+    underline.textContent = match[2];
+    fragment.append(underline);
+    cursor = match.index + match[0].length;
+  }
+  fragment.append(document.createTextNode(text.slice(cursor)));
+  target.replaceChildren(fragment);
+}
 
 const categoryPalette = ["cyan-card", "pink-card", "white-card", "yellow-card"];
 const itemIds = [
@@ -42,7 +61,50 @@ class ApiError extends Error {
     this.fieldErrors = error.field_errors || {};
     this.retryable = Boolean(error.retryable);
     this.status = status;
+    this.retryAfter = Math.max(1, Math.ceil(Number(error.retry_after_seconds) || 3));
+    this.operation = error.operation || "read";
   }
+}
+
+const cooldowns = {
+  deadlines: new Map(),
+  key(path, method) {
+    if (method === "DELETE") return "exit";
+    if (method === "PUT") return "submit";
+    if (method === "POST") return path.endsWith("participant-session") ? "registration" : "start";
+    return "read";
+  },
+  remaining(key) { return Math.max(0, Math.ceil(((this.deadlines.get(key) || 0) - Date.now()) / 1000)); },
+  set(key, seconds) { this.deadlines.set(key, Date.now() + seconds * 1000); this.sync(); },
+  button(button, key, disabled = false) {
+    if (!button) return;
+    button.dataset.rateOperation = key;
+    button.dataset.requestDisabled = String(disabled);
+    button.disabled = disabled || this.remaining(key) > 0;
+  },
+  sync() {
+    document.querySelectorAll("[data-rate-operation]").forEach(button => {
+      button.disabled = button.dataset.requestDisabled === "true" || this.remaining(button.dataset.rateOperation) > 0;
+    });
+    document.querySelectorAll("[data-cooldown-message]").forEach(span => {
+      const remaining = this.remaining(span.dataset.cooldownMessage);
+      const text = remaining ? `请求较频繁，请在 ${remaining} 秒后重试。` : "现在可以重试。";
+      if (span.textContent !== text) span.textContent = text;
+    });
+  },
+};
+window.setInterval(() => cooldowns.sync(), 250);
+
+function validateRegistrationForm(form) {
+  const rules = {display_name: [400, 100, "显示名"], identifier: [128, 64, "学号或工号"], contact: [512, 254, "联系方式"]};
+  for (const [field, [rawLimit, limit, label]] of Object.entries(rules)) {
+    const input = form.elements[field];
+    let normalized = input.value.normalize("NFKC").trim();
+    if (field === "identifier") normalized = normalized.toUpperCase();
+    const invalid = Array.from(input.value).length > rawLimit || Array.from(normalized).length > limit;
+    input.setCustomValidity(invalid ? `${label}最多 ${limit} 个字符。` : "");
+  }
+  return form.checkValidity();
 }
 
 function deepClone(value) {
@@ -402,18 +464,54 @@ class MockTransport {
 class HttpTransport {
   async request(path, options = {}) {
     const method = (options.method || "GET").toUpperCase();
+    const operation = cooldowns.key(path, method);
+    const waiting = cooldowns.remaining(operation);
+    if (waiting) throw new ApiError({code: "rate_limited", message: "请稍后重试。", retryable: true, retry_after_seconds: waiting, operation}, 429);
     const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
     if (!new Set(["GET", "HEAD", "OPTIONS"]).has(method)) headers["X-CSRFToken"] = csrfToken();
-    let response;
-    try {
-      response = await fetch(path, { credentials: "same-origin", ...options, method, headers });
-    } catch {
-      throw new ApiError({ code: "network_error", message: "网络连接失败，请检查连接后重试。", retryable: true }, 0);
+    // Retry only reads: a lost response does not mean a write failed on the server.
+    const attempts = method === "GET" ? 2 : 1;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), method === "GET" ? 12000 : 20000);
+      try {
+        const response = await fetch(path, {
+          credentials: "same-origin", cache: "no-store", ...options, method, headers,
+          signal: controller.signal,
+        });
+        if (response.status === 204) return null;
+        let body;
+        try {
+          body = await response.json();
+        } catch (error) {
+          if (controller.signal.aborted) throw error;
+          if (response.status === 429) body = {error: {code: "rate_limited", retryable: true}};
+          else
+          throw new ApiError({ code: "invalid_response", message: "未收到有效的服务响应，请稍后重试。", retryable: true }, response.status);
+        }
+        if (response.status === 429) {
+          const seconds = Math.max(1, Math.ceil(Number(response.headers.get("Retry-After")) || Number(body?.error?.retry_after_seconds) || 3));
+          cooldowns.set(operation, seconds);
+          throw new ApiError({...body.error, code: "rate_limited", retryable: true, retry_after_seconds: seconds, operation}, 429);
+        }
+        if (!response.ok) throw new ApiError(body?.error || {
+          code: "request_failed", message: "服务暂时不可用，请稍后重试。", retryable: response.status >= 500,
+        }, response.status);
+        return body;
+      } catch (error) {
+        const failure = error instanceof ApiError ? error : new ApiError({
+          code: controller.signal.aborted ? "request_timeout" : "network_error",
+          message: controller.signal.aborted
+            ? "请求超时，请重试。若刚才提交过，重试会向服务端确认结果。"
+            : "网络连接失败，请检查连接后重试。",
+          retryable: true,
+        });
+        if (failure.status === 429 || attempt + 1 === attempts || !failure.retryable) throw failure;
+      } finally {
+        clearTimeout(timer);
+      }
+      await new Promise(resolve => setTimeout(resolve, 500));
     }
-    if (response.status === 204) return null;
-    const body = await response.json();
-    if (!response.ok) throw new ApiError(body.error, response.status);
-    return body;
   }
 }
 
@@ -425,6 +523,7 @@ class QuizApi {
   register(payload) { return this.transport.request(endpoint.participantSession, { method: "POST", body: JSON.stringify(payload) }); }
   clearSession() { return this.transport.request(endpoint.participantSession, { method: "DELETE" }); }
   currentAttempt() { return this.transport.request(endpoint.currentAttempt); }
+  history(page) { return this.transport.request(endpoint.history(page)); }
   attempt(attemptId) { return this.transport.request(endpoint.attempt(attemptId)); }
   startAttempt(categoryCode) { return this.transport.request(endpoint.attempts, { method: "POST", body: JSON.stringify({ category_code: categoryCode }) }); }
   submitAttempt(attemptId, answers) { return this.transport.request(endpoint.submission(attemptId), { method: "PUT", body: JSON.stringify({ answers }) }); }
@@ -548,7 +647,11 @@ const initialAttemptElement = document.getElementById("initialAttempt");
 const initialAttempt = initialAttemptElement
   ? JSON.parse(initialAttemptElement.textContent)
   : null;
-if (initialParticipant && !uiStore.participant()) uiStore.saveParticipant(initialParticipant);
+// A previous tab's UI cache cannot authenticate the current server session.
+if (!MOCK_MODE) {
+  if (initialParticipant) uiStore.saveParticipant(initialParticipant);
+  else uiStore.clear();
+}
 
 function safeAsync(action) {
   return async (...args) => {
@@ -591,8 +694,13 @@ const app = {
   checkingTimeout: false,
   initialStateConsumed: false,
   retryActions: new Map(),
+  historyPage: 1,
+  historyPages: 1,
+  historySequence: 0,
+  historyOwner: null,
 
   screen(name) {
+    if (name !== "history") this.historySequence++;
     document.body.dataset.screen = name;
     document.querySelectorAll("[data-screen-panel]").forEach((panel) => {
       panel.classList.toggle("is-active", panel.dataset.screenPanel === name);
@@ -624,8 +732,17 @@ const app = {
     }
   },
 
+  errorFeedback(id, error, retry = null) {
+    this.feedback(id, "error", errorMessage(error), error?.retryable ? retry : null);
+    if (error?.status !== 429) return;
+    const root = document.getElementById(id);
+    root.querySelector("span").dataset.cooldownMessage = error.operation;
+    cooldowns.button(root.querySelector("button"), error.operation);
+    cooldowns.sync();
+  },
+
   handleUnexpected(error) {
-    this.feedback("quizFeedback", "error", errorMessage(error), error?.retryable ? () => this.bootstrap() : null);
+    this.errorFeedback("quizFeedback", error, () => this.bootstrap());
     this.announce(errorMessage(error));
   },
 
@@ -644,6 +761,7 @@ const app = {
     const form = document.getElementById("registrationForm");
     const entryAllowed = ["open", "paused", "closed"].includes(activity.status);
     [...form.elements].forEach((control) => { control.disabled = !entryAllowed; });
+    cooldowns.button(document.getElementById("registrationSubmit"), "registration", !entryAllowed);
     notice.hidden = activity.status === "open";
     if (activity.status !== "open") {
       notice.textContent = {
@@ -717,7 +835,7 @@ const app = {
       this.renderSections();
     } catch (error) {
       document.getElementById("activityStatusText").textContent = "活动信息加载失败";
-      this.feedback("registrationFeedback", "error", errorMessage(error), error?.retryable ? () => this.bootstrap() : null);
+      this.errorFeedback("registrationFeedback", error, () => this.bootstrap());
       this.screen("register");
     }
   },
@@ -748,18 +866,26 @@ const app = {
     this.activity.categories.forEach((category, index) => {
       const card = document.createElement("article");
       card.className = `category-card ${categoryPalette[index % categoryPalette.length]}`;
-      card.innerHTML = `
-        <div class="file-tab">FILE ${String(index + 1).padStart(2, "0")}</div>
-        <span class="category-code">${category.code.toUpperCase()}</span>
-        <h2>${category.title}</h2>
-        <p>题目与选项由服务端在开始挑战时返回。</p>
-        <div class="score-line"><span>本轮规则</span><b>${category.question_count} 题 · ${Math.round(category.time_limit_seconds / 60)} 分钟</b></div>
-      `;
+      const textElement = (tag, text, className = "") => {
+        const element = document.createElement(tag);
+        element.className = className;
+        element.textContent = text;
+        return element;
+      };
+      const scoreLine = document.createElement("div");
+      scoreLine.className = "score-line";
+      scoreLine.append(textElement("span", "本轮规则"), textElement("b", `${category.question_count} 题 · ${Math.round(category.time_limit_seconds / 60)} 分钟`));
+      card.append(
+        textElement("div", `FILE ${String(index + 1).padStart(2, "0")}`, "file-tab"),
+        textElement("span", String(category.code).toUpperCase(), "category-code"),
+        textElement("h2", category.title),
+        textElement("p", "题目与选项由服务端在开始挑战时返回。"), scoreLine,
+      );
       const button = document.createElement("button");
       button.type = "button";
       button.dataset.categoryCode = category.code;
       button.textContent = current ? "先继续当前答题" : canStart ? "开始挑战" : "当前不可开始";
-      button.disabled = !canStart;
+      cooldowns.button(button, "start", !canStart);
       button.setAttribute("aria-disabled", String(!canStart));
       card.append(button);
       grid.append(card);
@@ -767,19 +893,117 @@ const app = {
     this.screen("sections");
   },
 
+  historyControls(loading = false) {
+    cooldowns.button(document.getElementById("historyRefresh"), "read", loading);
+    cooldowns.button(document.getElementById("historyPrevious"), "read", loading || this.historyPage <= 1);
+    cooldowns.button(document.getElementById("historyNext"), "read", loading || this.historyPage >= this.historyPages);
+    document.querySelectorAll("[data-history-attempt]").forEach(button => cooldowns.button(button, "read", loading));
+  },
+
+  async loadHistory(page = 1) {
+    if (!this.participant) { this.screen("register"); return; }
+    this.stopCountdown();
+    this.screen("history");
+    const sequence = ++this.historySequence;
+    const owner = this.participant.id;
+    if (this.historyOwner !== owner) {
+      document.getElementById("historyList").replaceChildren();
+      document.getElementById("historyPageStatus").textContent = "";
+      this.historyOwner = owner;
+      this.historyPage = this.historyPages = 1;
+    }
+    this.historyControls(true);
+    this.feedback("historyFeedback", "", "正在读取记录…");
+    try {
+      const data = await api.history(page);
+      if (sequence !== this.historySequence || this.participant?.id !== owner) return;
+      if (data.current_attempt_id === null && this.currentAttempt?.status === "in_progress") {
+        // History can confirm an expiry while the quiz timer is not on screen.
+        this.currentAttempt = null;
+      }
+      this.historyPage = data.pagination.page;
+      this.historyPages = data.pagination.pages;
+      document.getElementById("historyPageStatus").textContent = `第 ${this.historyPage} / ${this.historyPages} 页 · 共 ${data.pagination.total} 次答题`;
+      const list = document.getElementById("historyList");
+      list.replaceChildren();
+      const text = (tag, value, className = "") => {
+        const node = document.createElement(tag); node.textContent = value; node.className = className; return node;
+      };
+      const labels = { submitted: "已提交", in_progress: "进行中", timed_out: "已超时", invalid: "已作废" };
+      data.attempts.forEach(attempt => {
+        const card = document.createElement("article");card.className = "window-card history-card";
+        const heading = document.createElement("div");heading.className = "window-title";
+        heading.append(text("span", attempt.category.title), text("span", labels[attempt.status] || attempt.status));
+        const content = document.createElement("div");content.className = "window-body";
+        content.append(text("p", attempt.status === "submitted" ? `${attempt.score} / ${attempt.question_count}` : attempt.status === "invalid" ? "不计入有效成绩" : "未形成有效成绩", "history-score"));
+        content.append(text("p", `开始：${recordTime(attempt.started_at)}`));
+        content.append(text("p", attempt.submitted_at ? `交卷：${recordTime(attempt.submitted_at)}` : `截止：${recordTime(attempt.deadline_at)}`));
+        if (["submitted", "in_progress"].includes(attempt.status)) {
+          const button = text("button", attempt.status === "submitted" ? "查看结果" : "继续答题", "secondary-button");
+          button.type = "button";button.dataset.historyAttempt = attempt.id;content.append(button);
+        }
+        card.append(heading, content);list.append(card);
+      });
+      if (!data.attempts.length) list.append(text("p", "还没有答题记录，返回板块即可开始挑战。", "history-notice"));
+      this.feedback("historyFeedback");
+    } catch (error) {
+      if (sequence !== this.historySequence || this.participant?.id !== owner) return;
+      if (error.status === 401) {
+        document.getElementById("historyList").replaceChildren();
+        document.getElementById("historyPageStatus").textContent = "";
+        this.feedback("historyFeedback", "error", "登录状态已失效，请返回板块并用原登记信息再次进入。");
+      } else {
+        this.errorFeedback("historyFeedback", error, () => this.loadHistory(page));
+      }
+    } finally {
+      if (sequence === this.historySequence) this.historyControls();
+    }
+  },
+
+  async openHistoryAttempt(attemptId) {
+    const sequence = ++this.historySequence;
+    const owner = this.participant?.id;
+    this.historyControls(true);
+    this.feedback("historyFeedback", "", "正在读取本次答题…");
+    try {
+      const { attempt } = await api.attempt(attemptId);
+      if (sequence !== this.historySequence || this.participant?.id !== owner) return;
+      if (attempt.status === "submitted") this.renderResult(attempt, { historical: true });
+      else if (attempt.status === "in_progress") this.routeAttempt(attempt);
+      else if (attempt.status === "timed_out" && this.currentAttempt?.id === attempt.id) this.routeAttempt(attempt);
+      else await this.loadHistory(this.historyPage);
+    } catch (error) {
+      if (sequence === this.historySequence && this.participant?.id === owner) {
+        this.errorFeedback("historyFeedback", error, () => this.openHistoryAttempt(attemptId));
+      }
+    } finally {
+      if (sequence === this.historySequence) this.historyControls();
+    }
+  },
+
   async register(form) {
     const submit = document.getElementById("registrationSubmit");
-    if (!form.checkValidity()) {
+    if (submit.disabled) return;
+    if (!validateRegistrationForm(form)) {
       this.feedback("registrationFeedback", "error", "请完整填写显示名、学号或工号和一种联系方式。");
       form.reportValidity();
       return;
     }
     const payload = Object.fromEntries(new FormData(form));
     delete payload.contact_type;
-    submit.disabled = true;
+    cooldowns.button(submit, "registration", true);
     submit.querySelector("span:first-child").textContent = "正在登记…";
     this.feedback("registrationFeedback", "loading", "正在建立参与者 Session…");
     try {
+      // Bootstrap can fail independently of registration on an unstable connection.
+      if (!this.activity) {
+        this.activity = (await api.activity()).activity;
+        this.renderActivity();
+        cooldowns.button(submit, "registration", true);
+        if (!["open", "paused", "closed"].includes(this.activity.status)) {
+          throw new ApiError({code: "activity_unavailable", message: "活动尚未开放，暂时不能登记。"});
+        }
+      }
       const response = await api.register(payload);
       this.participant = response.participant;
       uiStore.saveParticipant(response.participant);
@@ -798,15 +1022,15 @@ const app = {
         else throw error;
       }
     } catch (error) {
-      this.feedback("registrationFeedback", "error", errorMessage(error), error?.retryable ? () => this.register(form) : null);
+      this.errorFeedback("registrationFeedback", error, () => this.register(form));
     } finally {
-      submit.disabled = !["open", "paused", "closed"].includes(this.activity.status);
+      cooldowns.button(submit, "registration", this.activity ? !["open", "paused", "closed"].includes(this.activity.status) : false);
       submit.querySelector("span:first-child").textContent = "登记并继续";
     }
   },
 
   async clearSession(trigger) {
-    trigger.disabled = true;
+    cooldowns.button(trigger, "exit", true);
     const feedbackId = {
       sections: "sessionFeedback",
       quiz: "quizFeedback",
@@ -826,15 +1050,15 @@ const app = {
       this.feedback(feedbackId);
       await this.bootstrap();
     } catch (error) {
-      this.feedback(feedbackId, "error", errorMessage(error), error?.retryable ? () => this.clearSession(trigger) : null);
+      this.errorFeedback(feedbackId, error, () => this.clearSession(trigger));
     } finally {
-      trigger.disabled = false;
+      cooldowns.button(trigger, "exit");
     }
   },
 
   async startAttempt(categoryCode, trigger) {
     const original = trigger.textContent;
-    trigger.disabled = true;
+    cooldowns.button(trigger, "start", true);
     trigger.textContent = "正在开始…";
     this.feedback("attemptFeedback", "loading", "正在向服务端申请题目和截止时间…");
     try {
@@ -844,15 +1068,15 @@ const app = {
       this.feedback("attemptFeedback", "success", "答题记录已准备。将使用服务端返回的题目顺序和截止时间。");
       this.renderQuiz(response.attempt);
     } catch (error) {
-      this.feedback("attemptFeedback", "error", errorMessage(error), error?.retryable ? () => this.startAttempt(categoryCode, trigger) : null);
+      this.errorFeedback("attemptFeedback", error, () => this.startAttempt(categoryCode, trigger));
     } finally {
-      trigger.disabled = false;
+      cooldowns.button(trigger, "start");
       trigger.textContent = original;
     }
   },
 
   async resumeAttempt(trigger) {
-    trigger.disabled = true;
+    cooldowns.button(trigger, "read", true);
     const original = trigger.textContent;
     trigger.textContent = "正在恢复…";
     this.feedback("attemptFeedback", "loading", "正在读取当前答题和服务端状态…");
@@ -862,9 +1086,9 @@ const app = {
       uiStore.saveLastAttemptId(response.attempt.id);
       this.routeAttempt(response.attempt);
     } catch (error) {
-      this.feedback("attemptFeedback", "error", errorMessage(error), error?.retryable ? () => this.resumeAttempt(trigger) : null);
+      this.errorFeedback("attemptFeedback", error, () => this.resumeAttempt(trigger));
     } finally {
-      trigger.disabled = false;
+      cooldowns.button(trigger, "read");
       trigger.textContent = original;
     }
   },
@@ -908,7 +1132,7 @@ const app = {
     document.getElementById("questionNumber").textContent = question.position;
     document.getElementById("questionWindowTitle").textContent = `QUESTION_${String(question.position).padStart(3, "0")}.json`;
     document.getElementById("questionTypeText").textContent = question.type === "single_choice" ? "单选题" : "填空题";
-    document.getElementById("questionPrompt").textContent = question.prompt;
+    renderQuestionText(document.getElementById("questionPrompt"), question.prompt);
 
     const media = document.getElementById("questionMedia");
     const image = document.getElementById("questionImage");
@@ -971,7 +1195,7 @@ const app = {
         key.className = "option-key";
         key.textContent = option.id;
         const text = document.createElement("span");
-        text.textContent = option.text;
+        renderQuestionText(text, option.text);
         label.append(input, key, text);
         optionRoot.append(label);
       });
@@ -1047,7 +1271,7 @@ const app = {
         const detail = await api.attempt(this.currentAttempt.id);
         this.routeAttempt(detail.attempt);
       } else {
-        this.feedback("quizFeedback", "error", errorMessage(error), error?.retryable ? () => this.confirmTimeoutFromServer() : null);
+        this.errorFeedback("quizFeedback", error, () => this.confirmTimeoutFromServer());
       }
     } finally {
       this.checkingTimeout = false;
@@ -1055,6 +1279,8 @@ const app = {
   },
 
   openSubmitModal(trigger) {
+    cooldowns.button(trigger, "submit");
+    if (cooldowns.remaining("submit")) return;
     const unanswered = this.currentAttempt.question_count - Object.keys(this.answers).length;
     modal.open({
       trigger,
@@ -1071,7 +1297,7 @@ const app = {
   },
 
   async submit(button) {
-    button.disabled = true;
+    cooldowns.button(button, "submit", true);
     button.textContent = "正在提交…";
     this.feedback("quizFeedback", "loading", "正在一次提交全部答案…");
     const answers = Object.entries(this.answers).map(([itemId, answer]) => ({ item_id: itemId, answer }));
@@ -1086,10 +1312,11 @@ const app = {
       if (error instanceof ApiError && error.code === "attempt_expired") {
         await this.confirmTimeoutFromServer();
       } else {
-        this.feedback("quizFeedback", "error", errorMessage(error), error?.retryable ? () => this.openSubmitModal(document.getElementById("submitAttempt")) : null);
+        this.errorFeedback("quizFeedback", error, () => this.openSubmitModal(document.getElementById("submitAttempt")));
       }
     } finally {
-      button.disabled = false;
+      cooldowns.button(button, "submit");
+      cooldowns.button(document.getElementById("submitAttempt"), "submit");
       button.textContent = "确认交卷";
     }
   },
@@ -1109,17 +1336,21 @@ const app = {
     requestAnimationFrame(() => heading.focus());
   },
 
-  renderResult(attempt) {
+  renderResult(attempt, { historical = false } = {}) {
     this.stopCountdown();
     if (!modal.layer.hidden) modal.close({ restoreFocus: false });
     this.resultAttempt = attempt;
-    this.currentAttempt = null;
-    uiStore.saveLastAttemptId(attempt.id);
-    document.getElementById("resultCategory").textContent = `${attempt.category.title} / 本次挑战`;
+    if (!historical) {
+      this.currentAttempt = null;
+      uiStore.saveLastAttemptId(attempt.id);
+    }
+    document.getElementById("resultCategory").textContent = `${attempt.category.title} / ${historical ? "历史答题" : "本次挑战"}`;
     document.getElementById("resultScore").textContent = attempt.score;
     document.getElementById("resultTotal").textContent = attempt.question_count;
     document.getElementById("resultHighScore").textContent = `${attempt.category_high_score} / ${attempt.question_count}`;
     document.getElementById("resultStatus").textContent = attempt.status;
+    document.getElementById("resultSubmittedAt").textContent = attempt.submitted_at
+      ? `交卷时间：${recordTime(attempt.submitted_at)}（北京时间）` : "";
     const rewardBox = document.getElementById("rewardBox");
     rewardBox.hidden = !attempt.reward_phrase;
     document.getElementById("rewardPhrase").textContent = attempt.reward_phrase || "";
@@ -1134,7 +1365,7 @@ const app = {
       const position = document.createElement("span");
       position.textContent = String(question.position).padStart(2, "0");
       const prompt = document.createElement("b");
-      prompt.textContent = question.prompt;
+      renderQuestionText(prompt, question.prompt);
       const result = document.createElement("em");
       result.textContent = question.correct ? "✓" : "×";
       result.setAttribute("aria-label", question.correct ? "正确" : "错误");
@@ -1165,7 +1396,22 @@ function syncReviewSession(metadata) {
   if (metadata.attemptId) uiStore.saveLastAttemptId(metadata.attemptId);
 }
 
+function recordTime(value) {
+  if (!value || !Number.isFinite(new Date(value).getTime())) return "—";
+  return new Date(value).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false });
+}
+
 function bindEvents() {
+  document.querySelectorAll("[data-open-history]").forEach(button => button.addEventListener("click", safeAsync(() => app.loadHistory())));
+  document.getElementById("historyBackToSections").addEventListener("click", () => app.renderSections());
+  document.getElementById("historyRefresh").addEventListener("click", safeAsync(() => app.loadHistory(app.historyPage)));
+  document.getElementById("historyPrevious").addEventListener("click", safeAsync(() => app.loadHistory(app.historyPage - 1)));
+  document.getElementById("historyNext").addEventListener("click", safeAsync(() => app.loadHistory(app.historyPage + 1)));
+  document.getElementById("historyList").addEventListener("click", safeAsync(event => {
+    const button = event.target.closest("[data-history-attempt]");
+    if (button && !button.disabled) return app.openHistoryAttempt(button.dataset.historyAttempt);
+  }));
+  document.querySelector("#registrationForm")?.addEventListener("input", event => { if (event.target.setCustomValidity) event.target.setCustomValidity(""); });
   const form = document.getElementById("registrationForm");
   form.addEventListener("submit", safeAsync(async (event) => {
     event.preventDefault();

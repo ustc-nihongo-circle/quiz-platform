@@ -1,6 +1,7 @@
 from django.db import DatabaseError, connection
 from django.http import JsonResponse
 from django.shortcuts import render
+from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import ensure_csrf_cookie
 
 from .models import AttemptStatus, Participant, QuizAttempt
@@ -23,6 +24,7 @@ def readiness(request):
     return JsonResponse({"status": "ok", "database": "ok"})
 
 
+@never_cache
 @ensure_csrf_cookie
 def participant_page(request):
     """Render the same-origin participant application shell."""

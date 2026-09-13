@@ -96,6 +96,29 @@ else:
         }
     }
 
+DATABASE_ROUTERS = ["quiz.history_router.HistoryRouter"]
+history_database = os.getenv("QUIZ_HISTORY_DB_NAME", "")
+if history_database:
+    history_user = os.getenv("QUIZ_HISTORY_DB_USER", "")
+    history_password = os.getenv("QUIZ_HISTORY_DB_PASSWORD", "")
+    if (
+        history_database == DATABASES["default"]["NAME"]
+        or not history_user
+        or not history_password
+        or history_user == DATABASES["default"].get("USER")
+    ):
+        raise ImproperlyConfigured("History requires a separate database and read-only credentials")
+    DATABASES["history"] = {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": history_database,
+        "USER": history_user,
+        "PASSWORD": history_password,
+        "HOST": DATABASES["default"]["HOST"],
+        "PORT": DATABASES["default"]["PORT"],
+        "CONN_MAX_AGE": 60,
+        "OPTIONS": {"connect_timeout": 5, "options": "-c default_transaction_read_only=on"},
+    }
+
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
@@ -133,3 +156,9 @@ AXES_COOLOFF_TIME = timedelta(minutes=15)
 AXES_RESET_ON_SUCCESS = True
 AXES_LOCKOUT_PARAMETERS = [["username", "ip_address"]]
 AXES_IPWARE_PROXY_COUNT = int(os.getenv("DJANGO_TRUSTED_PROXY_COUNT", "0"))
+
+# Empty by default: only explicitly configured peers may supply the client address.
+QUIZ_TRUSTED_PROXY_CIDRS = [
+    value.strip() for value in os.getenv("QUIZ_TRUSTED_PROXY_CIDRS", "").split(",")
+    if value.strip()
+]

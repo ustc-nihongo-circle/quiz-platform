@@ -12,6 +12,7 @@ from .ops import (
     identity_export,
     leaderboard,
     participant_deidentify,
+    participant_detail,
     participant_entry_select,
     participant_reveal,
     participant_search,
@@ -20,11 +21,19 @@ from .ops import (
     reward_rule_update,
     statistics_export,
 )
+from .ops_history import history_activity, history_index, history_participant
 
 urlpatterns = [
     path("login/", OpsLoginView.as_view(), name="ops-login"),
     path("logout/", OpsLogoutView.as_view(), name="ops-logout"),
     path("", dashboard, name="ops-dashboard"),
+    path("history/", history_index, name="ops-history-index"),
+    path("history/activities/<uuid:activity_id>/", history_activity, name="ops-history-activity"),
+    path(
+        "history/activities/<uuid:activity_id>/participants/<uuid:participant_id>/",
+        history_participant,
+        name="ops-history-participant",
+    ),
     path(
         "activities/<uuid:activity_id>/",
         activity_console,
@@ -34,6 +43,11 @@ urlpatterns = [
         "activities/<uuid:activity_id>/snapshot/",
         activity_snapshot,
         name="ops-activity-snapshot",
+    ),
+    path(
+        "activities/<uuid:activity_id>/participants/<uuid:participant_id>/",
+        participant_detail,
+        name="ops-participant-detail",
     ),
     path(
         "activities/<uuid:activity_id>/participants/search/",

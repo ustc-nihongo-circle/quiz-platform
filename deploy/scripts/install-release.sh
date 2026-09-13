@@ -56,6 +56,14 @@ runuser -u nihongo-quiz -- env PYTHONPATH="$release_dir/src" \
 ln -sfn "$release_dir" "$app_root/current.next"
 mv -Tf "$app_root/current.next" "$app_root/current"
 systemctl restart nihongo-quiz.service
+install -m 0644 "$release_dir/deploy/systemd/nihongo-quiz-expire-attempts.service" /etc/systemd/system/nihongo-quiz-expire-attempts.service
+install -m 0644 "$release_dir/deploy/systemd/nihongo-quiz-expire-attempts.timer" /etc/systemd/system/nihongo-quiz-expire-attempts.timer
+install -m 0644 "$release_dir/deploy/systemd/nihongo-quiz-prune-rate-limits.service" /etc/systemd/system/nihongo-quiz-prune-rate-limits.service
+install -m 0644 "$release_dir/deploy/systemd/nihongo-quiz-prune-rate-limits.timer" /etc/systemd/system/nihongo-quiz-prune-rate-limits.timer
+systemctl daemon-reload
+systemctl enable --now nihongo-quiz-expire-attempts.timer
 curl --fail --silent --header 'X-Forwarded-Proto: https' \
   http://127.0.0.1:18080/health/ready/ | grep -F '"database": "ok"' >/dev/null
 echo "activated release $release_id"
+
+systemctl enable --now nihongo-quiz-prune-rate-limits.timer

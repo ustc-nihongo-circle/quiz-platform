@@ -29,6 +29,38 @@ from .models import (
 )
 
 SUBMISSION_GRACE_SECONDS = 3
+ATTEMPT_MAX_AGE = timedelta(minutes=30)
+
+
+def _attempt_has_expired(attempt: QuizAttempt, now) -> bool:
+    return now >= attempt.started_at + ATTEMPT_MAX_AGE or now > attempt.deadline_at + timedelta(
+        seconds=SUBMISSION_GRACE_SECONDS
+    )
+
+
+@transaction.atomic
+def expire_stale_attempts(*, now=None, activity=None, dry_run=False) -> int:
+    """Close abandoned sessions without requiring another participant request."""
+    now = now or timezone.now()
+    stale = QuizAttempt.objects.filter(
+        status=AttemptStatus.IN_PROGRESS,
+        started_at__lte=now - ATTEMPT_MAX_AGE,
+    )
+    if activity is not None:
+        stale = stale.filter(activity=activity)
+    if dry_run:
+        return stale.count()
+    # The conditional UPDATE rechecks status after waiting for a concurrent
+    # submitter's row lock, so an accepted result cannot be overwritten.
+    count = stale.update(status=AttemptStatus.TIMED_OUT, updated_at=now)
+    if count:
+        AdminAuditLog.objects.create(
+            activity=activity,
+            action="stale_attempts_expired",
+            reason="Answer sessions reached the 30-minute hard expiry limit.",
+            metadata={"count": count, "max_age_seconds": 1800},
+        )
+    return count
 
 
 class QuizStateError(ValueError):
@@ -336,7 +368,7 @@ def start_attempt(
         .first()
     )
     if existing:
-        if now <= existing.deadline_at + timedelta(seconds=SUBMISSION_GRACE_SECONDS):
+        if not _attempt_has_expired(existing, now):
             return AttemptStartResult(existing, False)
         existing.status = AttemptStatus.TIMED_OUT
         existing.save(update_fields=("status", "updated_at"))
@@ -353,6 +385,12 @@ def start_attempt(
             "The category or active question bank is unavailable."
         ) from error
 
+    from .rate_limits import ACTIVITY_NEW_ATTEMPT, PARTICIPANT_NEW_ATTEMPT, consume_limits
+
+    consume_limits([
+        (ACTIVITY_NEW_ATTEMPT, activity.pk, "activity"),
+        (PARTICIPANT_NEW_ATTEMPT, activity.pk, participant.pk),
+    ], now=now)
     selected: list[BankQuestion] = []
     for pool_key, quota in _pool_quotas(category, activation):
         candidates = list(_eligible_questions(activation, category.category_key, pool_key))
@@ -362,7 +400,7 @@ def start_attempt(
             )
         selected.extend(rng.sample(candidates, quota))
     rng.shuffle(selected)
-    deadline = now + timedelta(seconds=category.effective_time_limit_seconds)
+    deadline = now + min(timedelta(seconds=category.effective_time_limit_seconds), ATTEMPT_MAX_AGE)
     try:
         attempt = QuizAttempt.objects.create(
             activity=activity,
@@ -403,10 +441,7 @@ def _canonical_submission_digest(answers: dict[str, Any]) -> str:
 
 def refresh_attempt_timeout(attempt: QuizAttempt, *, now=None) -> QuizAttempt:
     now = now or timezone.now()
-    if (
-        attempt.status == AttemptStatus.IN_PROGRESS
-        and now > attempt.deadline_at + timedelta(seconds=SUBMISSION_GRACE_SECONDS)
-    ):
+    if attempt.status == AttemptStatus.IN_PROGRESS and _attempt_has_expired(attempt, now):
         QuizAttempt.objects.filter(
             pk=attempt.pk,
             status=AttemptStatus.IN_PROGRESS,
@@ -524,7 +559,7 @@ def _submit_attempt_atomic(
         raise AttemptInvalidated("The attempt has been invalidated.")
     if attempt.status == AttemptStatus.TIMED_OUT:
         raise AttemptExpired("The attempt deadline has passed.")
-    if now > attempt.deadline_at + timedelta(seconds=SUBMISSION_GRACE_SECONDS):
+    if _attempt_has_expired(attempt, now):
         attempt.status = AttemptStatus.TIMED_OUT
         attempt.save(update_fields=("status", "updated_at"))
         return None
@@ -669,6 +704,7 @@ def serialize_attempt(attempt: QuizAttempt) -> dict[str, Any]:
         },
         "started_at": attempt.started_at.isoformat(),
         "deadline_at": attempt.deadline_at.isoformat(),
+        "submitted_at": attempt.submitted_at.isoformat() if attempt.submitted_at else None,
         "question_count": attempt.question_count,
         "questions": questions,
     }

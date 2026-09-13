@@ -4,7 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>现场管理控制台</title>
-  <link rel="stylesheet" href="{% static 'quiz/ops.css' %}">
+  {% include 'quiz/favicon.html' %}
+  <link rel="stylesheet" href="{% static 'quiz/ops.css' %}?v=20260912-staff1">
 </head>
 <body>
   <header>
@@ -23,6 +24,11 @@
         <li>还没有活动届次。</li>
       {% endfor %}
     </ul>
+    {% if history_enabled %}
+      <h2>测试期间历史记录</h2>
+      <p><a href="{% url 'ops-history-index' %}">查看测试历史（只读）</a></p>
+      <p>历史参与者和答题记录单独保留，正式活动成绩继续在上方活动中查看。</p>
+    {% endif %}
   </main>
 </body>
 </html>

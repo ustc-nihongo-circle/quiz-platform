@@ -3,6 +3,7 @@
 
 # Agent runtime memory stays local because this repository may become public.
 /docs-agent/
+/.playwright-cli/
 
 # Secrets and local settings.
 .env

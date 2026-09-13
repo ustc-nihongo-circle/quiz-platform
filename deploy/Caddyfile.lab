@@ -14,5 +14,7 @@ https://quiz.localhost:18443 {
 		file_server
 	}
 
-	reverse_proxy 127.0.0.1:18080
+	reverse_proxy 127.0.0.1:18080 {
+		header_up X-Real-IP {remote_host}
+	}
 }

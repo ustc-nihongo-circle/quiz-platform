@@ -3,14 +3,22 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from django.conf import settings
-from django.core.exceptions import ValidationError
+from django.core.exceptions import RequestDataTooBig, ValidationError
 from django.http import FileResponse, Http404, HttpRequest, HttpResponse, JsonResponse
 from django.views.csrf import csrf_failure as default_csrf_failure
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_http_methods
 
-from .identity import ParticipantRecoveryRequired, register_or_resume
+from .identity import ParticipantRecoveryRequired, register_or_resume, validate_registration
 from .models import ActivityEdition, ActivityStatus, AttemptItem, Participant, QuizAttempt
+from .rate_limits import (
+    BROWSER_REGISTRATION,
+    IDENTIFIER_REGISTRATION,
+    RateLimited,
+    RateLimitUnavailable,
+    client_ip,
+    consume_limits,
+)
 from .services import (
     ActivityNotOpen,
     AttemptExpired,
@@ -44,6 +52,22 @@ def api_error(
     )
 
 
+def rate_limit_error(error):
+    if isinstance(error, RateLimited):
+        wait = error.retry_after_seconds
+        response = api_error("rate_limited", f"请求较频繁，请在 {wait} 秒后重试。",
+                             status=429, retryable=True)
+        data = json.loads(response.content)
+        data["error"]["retry_after_seconds"] = wait
+        response = JsonResponse(data, status=429)
+        response["Retry-After"] = str(wait)
+    else:
+        response = api_error("rate_limit_unavailable", "服务暂时不可用，请稍后重试。",
+                             status=503, retryable=True)
+    response["Cache-Control"] = "private, no-store"
+    return response
+
+
 def csrf_failure(request: HttpRequest, reason=""):
     if request.path.startswith("/api/"):
         return api_error(
@@ -64,11 +88,35 @@ def current_activity() -> ActivityEdition | None:
 def parse_json_object(request: HttpRequest) -> dict[str, object]:
     try:
         value = json.loads(request.body or b"{}")
-    except (TypeError, ValueError, UnicodeDecodeError) as error:
+    except (TypeError, ValueError, UnicodeDecodeError, RecursionError) as error:
         raise ValidationError("请求正文必须是 JSON 对象。") from error
     if not isinstance(value, dict):
         raise ValidationError("请求正文必须是 JSON 对象。")
     return value
+
+
+class RegistrationRequestError(ValidationError):
+    def __init__(self, code, message, status):
+        super().__init__(message)
+        self.code = code
+        self.status = status
+
+
+def parse_registration(request):
+    if request.content_type.lower() != "application/json":
+        raise RegistrationRequestError("unsupported_media_type", "请使用 JSON 提交登记信息。", 415)
+    try:
+        declared_length = int(request.META.get("CONTENT_LENGTH") or 0)
+    except ValueError as error:
+        raise ValidationError("无效的请求长度。") from error
+    try:
+        if declared_length > 8192 or len(request.body) > 8192:
+            raise RequestDataTooBig
+    except RequestDataTooBig as error:
+        raise RegistrationRequestError(
+            "request_too_large", "登记请求超过大小限制。", 413
+        ) from error
+    return parse_json_object(request)
 
 
 def validation_error_response(error: ValidationError) -> JsonResponse:
@@ -131,13 +179,29 @@ def participant_session(request: HttpRequest) -> JsonResponse:
     }:
         return api_error("activity_unavailable", "当前活动不接受参与者进入。", status=409)
     try:
-        payload = parse_json_object(request)
+        payload = parse_registration(request)
+        validated = validate_registration(
+            display_name=payload.get("display_name"), identifier=payload.get("identifier"),
+            contact=payload.get("contact"),
+        )
+        address = client_ip(request)
+        # CsrfViewMiddleware supplies the canonical cookie secret in real requests.
+        browser = request.META.get("CSRF_COOKIE") or "csrf-bypassed-test-client"
+        consume_limits([
+            (BROWSER_REGISTRATION, activity.pk, browser),
+            (IDENTIFIER_REGISTRATION, activity.pk, validated.identifier),
+        ])
         result = register_or_resume(
             activity=activity,
-            display_name=str(payload.get("display_name", "")),
-            identifier=str(payload.get("identifier", "")),
-            contact=str(payload.get("contact", "")),
+            display_name=payload.get("display_name"),
+            identifier=payload.get("identifier"),
+            contact=payload.get("contact"),
+            source_ip=address,
         )
+    except (RateLimited, RateLimitUnavailable) as error:
+        return rate_limit_error(error)
+    except RegistrationRequestError as error:
+        return api_error(error.code, error.message, status=error.status)
     except ParticipantRecoveryRequired:
         return api_error(
             "participant_recovery_required",
@@ -173,6 +237,8 @@ def attempts_collection(request: HttpRequest) -> JsonResponse:
             participant=participant,
             category_code=str(payload.get("category_code", "")),
         )
+    except (RateLimited, RateLimitUnavailable) as error:
+        return rate_limit_error(error)
     except ActivityNotOpen:
         return api_error("activity_not_open", "当前活动不接受新答题。", status=409)
     except QuestionBankUnavailable:

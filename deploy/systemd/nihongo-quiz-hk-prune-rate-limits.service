@@ -1,0 +1,15 @@
+[Unit]
+Description=Prune idle quiz admission-control buckets
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/srv/nihongo-quiz-hk
+ExecStart=/usr/bin/docker compose exec -T --interactive=false web python manage.py prune_rate_limit_buckets
+TimeoutStartSec=45
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true

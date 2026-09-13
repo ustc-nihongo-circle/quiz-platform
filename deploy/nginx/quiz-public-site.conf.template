@@ -1,0 +1,37 @@
+# Render placeholders during a reviewed release; do not install literally.
+include @SNIPPETS_ROOT@/quiz-rate-zones.conf;
+log_format nihongo_quiz_hk '$time_iso8601 $request_method $uri $status $request_time';
+server {
+    listen 80;
+    listen [::]:80;
+    server_name @ROOT_HOST@ @SITE_HOST@;
+    access_log @LOG_ROOT@/nihongo-quiz-hk.access.log nihongo_quiz_hk;
+    location /.well-known/acme-challenge/ { root @APP_ROOT@/acme; try_files $uri =404; }
+    location / { return 308 https://@SITE_HOST@$request_uri; }
+}
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name @ROOT_HOST@;
+    ssl_certificate @CERT_ROOT@/fullchain.pem;
+    ssl_certificate_key @CERT_ROOT@/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    add_header Strict-Transport-Security 'max-age=300' always;
+    access_log @LOG_ROOT@/nihongo-quiz-hk.access.log nihongo_quiz_hk;
+    return 308 https://@SITE_HOST@$request_uri;
+}
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name @SITE_HOST@;
+    ssl_certificate @CERT_ROOT@/fullchain.pem;
+    ssl_certificate_key @CERT_ROOT@/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    add_header Strict-Transport-Security 'max-age=300' always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy same-origin always;
+    access_log @LOG_ROOT@/nihongo-quiz-hk.access.log nihongo_quiz_hk;
+    error_log @LOG_ROOT@/nihongo-quiz-hk.error.log warn;
+    client_max_body_size 1m;
+    include @SNIPPETS_ROOT@/quiz-public-locations.conf;
+}

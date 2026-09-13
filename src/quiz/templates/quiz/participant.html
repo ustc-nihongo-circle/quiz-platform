@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
   <title>USTC 日语协会游园会答题</title>
-  <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="{% static 'quiz/participant.css' %}">
+  {% include 'quiz/favicon.html' %}
+  <link rel="stylesheet" href="{% static 'quiz/participant.css' %}?v=20260912-records1">
 </head>
 <body id="participantApp" data-screen="boot" data-overlay="none">
   <div id="pageRoot">
@@ -16,7 +16,7 @@
 
     <div class="browser-strip" aria-hidden="true">
       <span>QUIZ_HOME/main</span>
-      <span class="address">quiz.mmdustc.top / participant</span>
+      <span class="address">{{ request.get_host }} / participant</span>
       <span class="window-glyphs">− □ ×</span>
     </div>
 
@@ -89,13 +89,13 @@
               <label>
                 <span>显示名</span>
                 <small>姓名或昵称均可</small>
-                <input name="display_name" autocomplete="nickname" maxlength="100" placeholder="例如：林檎同学" required>
+                <input name="display_name" autocomplete="nickname" maxlength="400" placeholder="例如：林檎同学" required>
               </label>
 
               <label>
                 <span>学号或工号</span>
                 <small>用于找回本次活动记录</small>
-                <input name="identifier" autocomplete="username" placeholder="例如：PBxxxxxxxx" required>
+                <input name="identifier" autocomplete="username" maxlength="128" placeholder="例如：PBxxxxxxxx" required>
               </label>
 
               <fieldset>
@@ -104,7 +104,7 @@
                   <label><input type="radio" name="contact_type" value="phone" checked><span>手机号</span></label>
                   <label><input type="radio" name="contact_type" value="email"><span>邮箱</span></label>
                 </div>
-                <input name="contact" autocomplete="tel" inputmode="tel" placeholder="例如：138 0000 0000" required>
+                <input name="contact" autocomplete="tel" inputmode="tel" maxlength="512" placeholder="例如：138 0000 0000" required>
               </fieldset>
 
               <div class="privacy-copy">
@@ -128,7 +128,10 @@
             <h1 id="sectionsTitle">选择一个板块</h1>
             <p id="sectionsDescription">板块数据正在加载。</p>
           </div>
-          <button class="text-button" id="clearSessionButton" type="button">更换参与者</button>
+          <div class="history-actions">
+            <button class="secondary-button" type="button" data-open-history>我的答题记录</button>
+            <button class="text-button" id="clearSessionButton" type="button">更换参与者</button>
+          </div>
         </div>
 
         <div class="operation-feedback" id="sessionFeedback" role="status" aria-live="polite"></div>
@@ -144,6 +147,24 @@
         <div class="operation-feedback" id="attemptFeedback" role="status" aria-live="polite"></div>
 
         <div class="category-grid" id="categoryGrid" aria-live="polite"></div>
+      </section>
+
+      <section class="screen" data-screen-panel="history" aria-labelledby="historyTitle">
+        <div class="section-heading">
+          <div><p class="eyebrow">MY RECORDS</p><h1 id="historyTitle">我的答题记录</h1><p>本次活动的全部答题，最新的在前。时间为北京时间。</p></div>
+          <button class="secondary-button" type="button" id="historyBackToSections">返回板块</button>
+        </div>
+        <p class="history-notice">已提交的成绩由服务器保存；更换设备或退出后，可用原登记信息再次进入查看。正在进行的答题仍按原截止时间计时。</p>
+        <div class="operation-feedback" id="historyFeedback" role="status" aria-live="polite"></div>
+        <div class="history-actions">
+          <button class="secondary-button" type="button" id="historyRefresh">刷新记录</button>
+          <span id="historyPageStatus" role="status"></span>
+        </div>
+        <div id="historyList" class="history-list"></div>
+        <nav class="history-actions" aria-label="答题记录分页">
+          <button class="secondary-button" type="button" id="historyPrevious">上一页</button>
+          <button class="secondary-button" type="button" id="historyNext">下一页</button>
+        </nav>
       </section>
 
       <section class="screen" data-screen-panel="quiz" aria-labelledby="quizTitle">
@@ -215,6 +236,7 @@
               </div>
               <div class="result-actions">
                 <button class="primary-button" type="button" id="timeoutBackToSections">返回板块</button>
+                <button class="secondary-button" type="button" data-open-history>我的答题记录</button>
                 <button class="secondary-button" type="button" id="timeoutClearSession">返回入口</button>
               </div>
               <div class="operation-feedback" id="timeoutFeedback" role="status" aria-live="polite"></div>
@@ -242,6 +264,8 @@
             <div class="window-body score-body">
               <p class="eyebrow" id="resultCategory">本次挑战</p>
               <h1 id="resultTitle">答题完成</h1>
+              <p class="history-notice" id="resultSaveReminder">建议截图保存本次成绩，方便现场出示。之后也可在“我的答题记录”中查看。</p>
+              <p class="result-time" id="resultSubmittedAt"></p>
               <div class="score-display"><strong id="resultScore">0</strong><span>/ <span id="resultTotal">0</span></span></div>
               <div class="score-compare">
                 <div><span>板块最高分</span><b id="resultHighScore">0 / 0</b></div>
@@ -256,6 +280,7 @@
                 <button class="primary-button" type="button" id="resultBackToSections">再选一个板块</button>
                 <button class="secondary-button" type="button" id="resultClearSession">返回入口</button>
               </div>
+              <button class="secondary-button" type="button" data-open-history>我的答题记录</button>
               <div class="operation-feedback" id="resultFeedback" role="status" aria-live="polite"></div>
             </div>
           </article>
@@ -299,6 +324,6 @@
   <div class="sr-only" id="globalAnnouncer" aria-live="polite"></div>
   {{ initial_participant|json_script:"initialParticipant" }}
   {{ initial_attempt|json_script:"initialAttempt" }}
-  <script src="{% static 'quiz/participant.js' %}" defer></script>
+  <script src="{% static 'quiz/participant.js' %}?v=20260912-records1" defer></script>
 </body>
 </html>

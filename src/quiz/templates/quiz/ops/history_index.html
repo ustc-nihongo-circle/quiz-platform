@@ -1,0 +1,12 @@
+{% extends 'quiz/ops/history_base.html' %}
+{% block content %}
+  {% for activity in activities %}
+    <section class="window">
+      <div class="window-titlebar"><h2>{{ activity.title }}</h2><span>测试历史</span></div>
+      <div class="window-body">
+        <p>{{ activity.participant_count }} 位参与者 · {{ activity.attempt_count }} 份答卷</p>
+        <a class="button" href="{% url 'ops-history-activity' activity.pk %}">查看参与者与答题记录</a>
+      </div>
+    </section>
+  {% empty %}<p>没有测试答题记录。</p>{% endfor %}
+{% endblock %}

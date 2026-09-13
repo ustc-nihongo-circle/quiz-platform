@@ -736,6 +736,17 @@ class RewardRule(models.Model):
         return self.text
 
 
+class RateLimitBucket(models.Model):
+    key = models.CharField(max_length=64, primary_key=True)
+    namespace = models.CharField(max_length=32)
+    tokens = models.DecimalField(max_digits=18, decimal_places=6)
+    updated_at = models.DateTimeField()
+    expires_at = models.DateTimeField(db_index=True)
+
+    def __str__(self):
+        return self.namespace
+
+
 class AdminAuditLog(models.Model):
     actor = models.ForeignKey(
         settings.AUTH_USER_MODEL,

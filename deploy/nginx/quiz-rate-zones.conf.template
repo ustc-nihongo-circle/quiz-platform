@@ -1,0 +1,17 @@
+# Included once in nginx's http context. All names belong to this quiz site.
+map $request_method $quiz_registration_ip { default ""; POST $binary_remote_addr; }
+map $request_method $quiz_registration_site { default ""; POST $server_name; }
+map $request_method $quiz_exit_ip { default ""; DELETE $binary_remote_addr; }
+map $request_method $quiz_exit_site { default ""; DELETE $server_name; }
+limit_req_zone $quiz_registration_ip zone=quiz_registration_ip:2m rate=10r/s;
+limit_req_zone $quiz_registration_site zone=quiz_registration_site:64k rate=20r/s;
+limit_req_zone $binary_remote_addr zone=quiz_start_ip:2m rate=20r/s;
+limit_req_zone $server_name zone=quiz_start_site:64k rate=40r/s;
+limit_req_zone $binary_remote_addr zone=quiz_submit_ip:2m rate=50r/s;
+limit_req_zone $server_name zone=quiz_submit_site:64k rate=100r/s;
+limit_req_zone $binary_remote_addr zone=quiz_read_ip:2m rate=100r/s;
+limit_req_zone $server_name zone=quiz_read_site:64k rate=200r/s;
+limit_req_zone $quiz_exit_ip zone=quiz_exit_ip:2m rate=10r/s;
+limit_req_zone $quiz_exit_site zone=quiz_exit_site:64k rate=20r/s;
+limit_req_zone $binary_remote_addr zone=quiz_health_ip:2m rate=5r/s;
+limit_req_zone $server_name zone=quiz_health_site:64k rate=20r/s;

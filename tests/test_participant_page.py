@@ -21,6 +21,14 @@ def test_site_root_redirects_to_the_participant_page(client):
     assert response.headers["Location"] == "/participant/"
 
 
+def test_participant_page_revalidates_session_and_uses_current_host(client):
+    response = client.get("/participant/", HTTP_HOST="localhost")
+    assert "no-store" in response.headers["Cache-Control"]
+    assert "private" in response.headers["Cache-Control"]
+    assert b"localhost / participant" in response.content
+    assert b"quiz.mmdustc.top" not in response.content
+
+
 def test_participant_page_uses_production_assets_without_mock_review_copy(client):
     response = client.get("/participant/")
     page = response.content.decode()

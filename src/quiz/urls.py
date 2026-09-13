@@ -10,6 +10,7 @@ from .api import (
     current_attempt,
     participant_session,
 )
+from .participant_history import participant_history
 from .views import health, participant_page, readiness
 
 urlpatterns = [
@@ -22,6 +23,7 @@ urlpatterns = [
     path("api/v1/participant-session", participant_session, name="api-participant-session"),
     path("api/v1/attempts", attempts_collection, name="api-attempts"),
     path("api/v1/attempts/current", current_attempt, name="api-current-attempt"),
+    path("api/v1/attempts/history", participant_history, name="api-participant-history"),
     path("api/v1/attempts/<uuid:attempt_id>", attempt_detail, name="api-attempt-detail"),
     path(
         "api/v1/attempts/<uuid:attempt_id>/items/<uuid:item_id>/image",

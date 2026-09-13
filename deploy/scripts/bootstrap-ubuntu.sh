@@ -76,9 +76,16 @@ fi
 install -m 0644 "$deploy_root/systemd/nihongo-quiz.service" /etc/systemd/system/nihongo-quiz.service
 install -m 0644 "$deploy_root/systemd/nihongo-quiz-backup.service" /etc/systemd/system/nihongo-quiz-backup.service
 install -m 0644 "$deploy_root/systemd/nihongo-quiz-backup.timer" /etc/systemd/system/nihongo-quiz-backup.timer
+install -m 0644 "$deploy_root/systemd/nihongo-quiz-expire-attempts.service" /etc/systemd/system/nihongo-quiz-expire-attempts.service
+install -m 0644 "$deploy_root/systemd/nihongo-quiz-expire-attempts.timer" /etc/systemd/system/nihongo-quiz-expire-attempts.timer
 install -m 0644 "$deploy_root/Caddyfile.lab" /etc/caddy/Caddyfile
+install -m 0644 "$deploy_root/systemd/nihongo-quiz-prune-rate-limits.service" /etc/systemd/system/nihongo-quiz-prune-rate-limits.service
+install -m 0644 "$deploy_root/systemd/nihongo-quiz-prune-rate-limits.timer" /etc/systemd/system/nihongo-quiz-prune-rate-limits.timer
 systemctl daemon-reload
 systemctl enable postgresql caddy nihongo-quiz.service nihongo-quiz-backup.timer
+systemctl enable nihongo-quiz-expire-attempts.timer
 systemctl restart postgresql caddy
 
 echo "Ubuntu host prerequisites are ready. Install the first release next."
+
+systemctl enable nihongo-quiz-prune-rate-limits.timer

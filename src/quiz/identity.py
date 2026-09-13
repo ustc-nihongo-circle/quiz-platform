@@ -42,6 +42,49 @@ class RegistrationResult:
     created: bool
 
 
+@dataclass(frozen=True)
+class RegistrationInput:
+    display_name: str
+    identifier: str
+    contact: str
+
+
+def validate_registration(*, display_name, identifier, contact) -> RegistrationInput:
+    """Bound untrusted inputs before normalization, hashing or encryption."""
+    values = {"display_name": display_name, "identifier": identifier, "contact": contact}
+    raw_limits = {"display_name": 400, "identifier": 128, "contact": 512}
+    limits = {"display_name": 100, "identifier": 64, "contact": 254}
+    labels = {"display_name": "显示名", "identifier": "学号或工号", "contact": "联系方式"}
+    errors = {}
+    for field, value in values.items():
+        if not isinstance(value, str):
+            errors[field] = [f"{labels[field]}必须是文本。"]
+        elif len(value) > raw_limits[field]:
+            errors[field] = [f"{labels[field]}输入过长。"]
+        elif "\x00" in value or any(unicodedata.category(c) == "Cs" for c in value):
+            errors[field] = [f"{labels[field]}含有无效字符。"]
+    if errors:
+        raise ValidationError(errors)
+    normalizers = {
+        "display_name": lambda value: unicodedata.normalize("NFKC", value).strip(),
+        "identifier": normalize_identifier,
+        "contact": normalize_contact,
+    }
+    for field, normalize in normalizers.items():
+        try:
+            values[field] = normalize(values[field])
+        except ValidationError:
+            errors[field] = [f"请输入有效的{labels[field]}。"]
+            continue
+        if not values[field]:
+            errors[field] = [f"{labels[field]}不能为空。"]
+        elif len(values[field]) > limits[field]:
+            errors[field] = [f"{labels[field]}最多 {limits[field]} 个字符。"]
+    if errors:
+        raise ValidationError(errors)
+    return RegistrationInput(**values)
+
+
 def normalize_identifier(value: str) -> str:
     normalized = unicodedata.normalize("NFKC", value).strip().upper()
     if not normalized or any(character.isspace() for character in normalized):
@@ -183,13 +226,15 @@ def register_or_resume(
     identifier: str,
     contact: str,
     protector: IdentityProtector | None = None,
+    source_ip: str | None = None,
 ) -> RegistrationResult:
+    validated = validate_registration(
+        display_name=display_name, identifier=identifier, contact=contact
+    )
     protector = protector or IdentityProtector.from_environment()
-    normalized_display_name = unicodedata.normalize("NFKC", display_name).strip()
-    if not normalized_display_name:
-        raise ValidationError("Display name must not be empty.")
-    normalized_identifier = normalize_identifier(identifier)
-    normalized_contact = normalize_contact(contact)
+    normalized_display_name = validated.display_name
+    normalized_identifier = validated.identifier
+    normalized_contact = validated.contact
     identifier_digest = protector.digest(
         normalized_identifier,
         activity_id=activity.pk,
@@ -221,6 +266,12 @@ def register_or_resume(
 
         try:
             with transaction.atomic():
+                from .rate_limits import ACTIVITY_NEW_IDENTITY, IP_NEW_IDENTITY, consume_limits
+
+                limits = [(ACTIVITY_NEW_IDENTITY, activity.pk, "activity")]
+                if source_ip is not None:
+                    limits.append((IP_NEW_IDENTITY, activity.pk, source_ip))
+                consume_limits(limits)
                 participant = Participant.objects.create(activity=activity)
                 ParticipantIdentity.objects.create(
                     participant=participant,

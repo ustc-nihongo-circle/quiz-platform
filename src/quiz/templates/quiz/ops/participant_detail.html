@@ -1,0 +1,61 @@
+{% load static %}<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>参与者答题记录 · 现场管理控制台</title>
+  {% include 'quiz/favicon.html' %}
+  <link rel="stylesheet" href="{% static 'quiz/ops.css' %}?v=20260912-staff1">
+</head>
+<body>
+  <header class="topbar detail-topbar">
+    <div><p class="eyebrow">USTC NIHONGO QUIZ / OPS</p><h1>参与者答题记录</h1></div>
+    {% if history_mode %}<a class="button secondary" href="{% url 'ops-history-activity' activity.pk %}">返回测试历史</a>{% else %}<a class="button secondary" href="{% url 'ops-activity-console' activity.pk %}#participantPanel">返回活动后台</a>{% endif %}
+  </header>
+  <main class="participant-detail console">
+    {% if history_mode %}<p class="help-text" data-history-readonly>测试历史 · 只读查看</p>{% endif %}
+    <section class="window hero-window">
+      <div class="window-titlebar" id="participantHeading" data-refresh-region><h2>{{ display_name }}</h2><span>共 {{ attempt_page.paginator.count }} 次答题</span></div>
+      {% include 'quiz/ops/refresh_controls.html' %}
+      <div class="window-body">
+        <p>{{ activity.title }} · 显示名（昵称/姓名）</p>
+        <p class="mono">内部参与者 ID：{{ participant.pk }}</p>
+        <p class="help-text">当前活动的全部记录，包含进行中、已提交、已超时和已作废；按开始时间从新到旧排列。每页 25 条。</p>
+      </div>
+    </section>
+    <div id="participantAttemptRecords" class="console" data-refresh-region>
+    {% for attempt in attempt_page %}
+      <article class="window attempt-record" id="attempt-{{ attempt.pk }}">
+        <div class="window-titlebar"><h2>{{ attempt.category_config.title }}</h2><span>{{ attempt.get_status_display }} · {% if attempt.status == 'in_progress' %}待交卷{% else %}{{ attempt.score }}/{{ attempt.question_count }}{% endif %}</span></div>
+        <div class="window-body">
+          <div class="attempt-times">
+            <span>开始：{{ attempt.started_at|date:'Y-m-d H:i:s' }}</span>
+            <span>截止：{{ attempt.deadline_at|date:'Y-m-d H:i:s' }}</span>
+            <span>交卷：{{ attempt.submitted_at|date:'Y-m-d H:i:s'|default:'尚未交卷' }}</span>
+          </div>
+          <p class="mono">答题记录：{{ attempt.pk }}</p>
+          {% if attempt.status == 'invalid' %}<p class="help-text">此记录已作废，不计入有效成绩。</p>{% endif %}
+          <details class="attempt-items">
+            <summary>逐题提交记录</summary>
+            <p class="help-text">按题序显示提交内容和当次判定。进行中的答卷尚未交卷，本页不读取浏览器中的作答草稿。</p>
+            <div class="table-wrap">
+              <table><thead><tr><th>题序</th><th>提交内容</th><th>判定</th></tr></thead><tbody>
+                {% for item in attempt.items.all %}
+                  <tr><td>{{ item.display_order }}</td><td class="submitted-answer">{{ item.submitted_answer|default_if_none:'未提交' }}</td><td>{{ item.is_correct|yesno:'正确,错误,尚未判定' }}</td></tr>
+                {% empty %}<tr><td colspan="3">无逐题提交记录。</td></tr>{% endfor %}
+              </tbody></table>
+            </div>
+          </details>
+        </div>
+      </article>
+    {% empty %}<section class="window"><div class="window-body">该参与者尚无答题记录。</div></section>{% endfor %}
+    <nav class="toolbar pagination" aria-label="答题记录分页">
+      {% if attempt_page.has_previous %}<a class="button secondary" href="?page={{ attempt_page.previous_page_number }}">上一页</a>{% endif %}
+      <span>第 {{ attempt_page.number }} / {{ attempt_page.paginator.num_pages }} 页 · 共 {{ attempt_page.paginator.count }} 条</span>
+      {% if attempt_page.has_next %}<a class="button secondary" href="?page={{ attempt_page.next_page_number }}">下一页</a>{% endif %}
+    </nav>
+    </div>
+  </main>
+  <script src="{% static 'quiz/ops-refresh.js' %}?v=20260912-refresh1" defer></script>
+</body>
+</html>

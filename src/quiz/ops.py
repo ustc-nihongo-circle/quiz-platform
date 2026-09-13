@@ -3,6 +3,7 @@ from decimal import Decimal, InvalidOperation
 from django.contrib.auth.decorators import login_required, permission_required
 from django.contrib.auth.views import LoginView, LogoutView
 from django.core.exceptions import ValidationError
+from django.core.paginator import Paginator
 from django.db.models import Count, Max, Q
 from django.http import HttpResponse, JsonResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404, render
@@ -19,6 +20,7 @@ from .models import (
     QuizAttempt,
     RewardRule,
 )
+from .ops_history import history_enabled
 from .ops_services import (
     identity_export_rows,
     leaderboard_rows,
@@ -53,7 +55,11 @@ class OpsLogoutView(LogoutView):
 @permission_required("quiz.operate_quiz", raise_exception=True)
 def dashboard(request):
     activities = ActivityEdition.objects.order_by("-created_at")
-    return render(request, "quiz/ops/dashboard.html", {"activities": activities})
+    return render(
+        request,
+        "quiz/ops/dashboard.html",
+        {"activities": activities, "history_enabled": history_enabled()},
+    )
 
 
 @never_cache
@@ -62,6 +68,7 @@ def dashboard(request):
 @require_GET
 def activity_console(request, activity_id):
     activity = get_object_or_404(ActivityEdition, pk=activity_id)
+    participant_result = search_participants(activity=activity)
     categories = list(activity.category_configs.all())
     current_activation = (
         activity.bank_activations.filter(is_current=True).select_related("bank").first()
@@ -90,13 +97,14 @@ def activity_console(request, activity_id):
             "available_banks": QuestionBankVersion.objects.filter(
                 finalized_at__isnull=False
             ).order_by("-imported_at"),
-            "participants": search_participants(activity=activity),
+            "participants": participant_result["participants"],
+            "participant_pagination": participant_result["pagination"],
             "recent_attempts": activity.attempts.select_related(
-                "category_config"
-            ).order_by("-created_at")[:30],
-            "reward_rules": activity.reward_rules.select_related(
-                "category_config"
-            ).order_by("-is_active", "-priority", "pk"),
+                "category_config", "participant__identity"
+            ).order_by("-created_at", "pk")[:30],
+            "reward_rules": activity.reward_rules.select_related("category_config").order_by(
+                "-is_active", "-priority", "pk"
+            ),
             "audit_logs": activity.audit_logs.select_related("actor").all()[:100],
             "leaderboard": (
                 leaderboard_rows(
@@ -149,18 +157,49 @@ def activity_snapshot(request, activity_id):
 def participant_search(request, activity_id):
     activity = get_object_or_404(ActivityEdition, pk=activity_id)
     response = JsonResponse(
-        {
-            "participants": search_participants(
-                activity=activity,
-                display_name=request.POST.get("display_name", ""),
-                identifier=request.POST.get("identifier", ""),
-                contact=request.POST.get("contact", ""),
-                participant_id=request.POST.get("participant_id", ""),
-            )
-        }
+        search_participants(
+            activity=activity,
+            display_name=request.POST.get("display_name", ""),
+            identifier=request.POST.get("identifier", ""),
+            contact=request.POST.get("contact", ""),
+            participant_id=request.POST.get("participant_id", ""),
+            sort=request.POST.get("sort", "recent"),
+            page=request.POST.get("page", "1"),
+        )
     )
     response["Cache-Control"] = "private, no-store"
     return response
+
+
+@never_cache
+@login_required(login_url="/ops/login/")
+@permission_required("quiz.operate_quiz", raise_exception=True)
+@require_GET
+def participant_detail(request, activity_id, participant_id):
+    participant = get_object_or_404(
+        Participant.objects.select_related("activity", "identity"),
+        pk=participant_id,
+        activity_id=activity_id,
+    )
+    identity = getattr(participant, "identity", None)
+    attempts = (
+        participant.attempts.filter(activity_id=activity_id)
+        .select_related("category_config")
+        .order_by("-started_at", "pk")
+    )
+    attempt_page = Paginator(attempts, 25).get_page(request.GET.get("page", "1"))
+    # Only fetch submitted item values for this page, never answer keys or identity secrets.
+    attempt_page.object_list = attempt_page.object_list.prefetch_related("items")
+    return render(
+        request,
+        "quiz/ops/participant_detail.html",
+        {
+            "activity": participant.activity,
+            "participant": participant,
+            "display_name": identity.display_name if identity else "已去身份化",
+            "attempt_page": attempt_page,
+        },
+    )
 
 
 @never_cache
@@ -369,9 +408,7 @@ def participant_deidentify(request, participant_id):
         )
     except ValidationError as error:
         return JsonResponse({"errors": error.messages}, status=400)
-    return JsonResponse(
-        {"participant_id": str(participant.pk), "deidentified": deidentified}
-    )
+    return JsonResponse({"participant_id": str(participant.pk), "deidentified": deidentified})
 
 
 @never_cache

@@ -1,0 +1,34 @@
+{% extends 'quiz/ops/history_base.html' %}
+{% block content %}
+  <section class="window">
+    <div class="window-titlebar"><h2>{{ activity.title }}</h2><a href="{% url 'ops-history-index' %}">全部测试活动</a></div>
+    <div class="window-body">
+      <form method="post" id="historySearch">
+        {% csrf_token %}
+        <div class="toolbar">
+          <label>显示名<input name="display_name" value="{{ query }}" maxlength="400"></label>
+          <label>排序<select name="sort">
+            <option value="recent" {% if sort == 'recent' %}selected{% endif %}>最近答题优先</option>
+            <option value="newest" {% if sort == 'newest' %}selected{% endif %}>最新登记优先</option>
+            <option value="oldest" {% if sort == 'oldest' %}selected{% endif %}>最早登记优先</option>
+            <option value="name" {% if sort == 'name' %}selected{% endif %}>显示名顺序</option>
+            <option value="attempts" {% if sort == 'attempts' %}selected{% endif %}>答题次数优先</option>
+          </select></label>
+          <button class="button" type="submit" name="page" value="1">检索</button>
+        </div>
+        <div class="table-wrap">
+          <table><thead><tr><th>显示名</th><th>登记时间</th><th>答题次数</th><th>最近答题</th><th>记录</th></tr></thead><tbody id="historyParticipants">
+          {% for person in participant_page %}
+            <tr><td><a href="{% url 'ops-history-participant' activity.pk person.pk %}">{{ person.identity.display_name|default:'已去身份化' }}</a></td><td>{{ person.created_at|date:'Y-m-d H:i' }}</td><td>{{ person.attempt_count }}</td><td>{{ person.last_attempt_at|date:'m-d H:i'|default:'尚未答题' }}</td><td><a href="{% url 'ops-history-participant' activity.pk person.pk %}">全部答题</a></td></tr>
+          {% empty %}<tr><td colspan="5">没有匹配的参与者。</td></tr>{% endfor %}
+          </tbody></table>
+        </div>
+        <nav class="toolbar pagination" aria-label="历史参与者分页">
+          {% if participant_page.has_previous %}<button class="button secondary" type="submit" name="page" value="{{ participant_page.previous_page_number }}">上一页</button>{% endif %}
+          <span>第 {{ participant_page.number }} / {{ participant_page.paginator.num_pages }} 页 · 共 {{ participant_page.paginator.count }} 人</span>
+          {% if participant_page.has_next %}<button class="button secondary" type="submit" name="page" value="{{ participant_page.next_page_number }}">下一页</button>{% endif %}
+        </nav>
+      </form>
+    </div>
+  </section>
+{% endblock %}

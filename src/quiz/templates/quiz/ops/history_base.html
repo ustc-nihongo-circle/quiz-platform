@@ -1,0 +1,20 @@
+{% load static %}<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>测试历史 · 现场管理控制台</title>
+  {% include 'quiz/favicon.html' %}
+  <link rel="stylesheet" href="{% static 'quiz/ops.css' %}?v=20260912-staff1">
+</head>
+<body>
+  <header class="topbar detail-topbar">
+    <div><p class="eyebrow">USTC NIHONGO QUIZ / OPS</p><h1>测试历史</h1></div>
+    <a class="button secondary" href="{% url 'ops-dashboard' %}">返回正式后台</a>
+  </header>
+  <main class="participant-detail console">
+    <p class="help-text" data-history-readonly>只读查看 · 测试期间的参与者与答题记录单独保留</p>
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>
