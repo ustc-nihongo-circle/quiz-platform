@@ -1,6 +1,8 @@
 # 仓库结构与职责
 
-最后更新：2026-08-26
+最后更新：2026-09-13
+
+归档发行入口为 `deploy/bundle/quizctl.py` 和 `docs/deployment-release.md`；`deploy/container/` 保存干净镜像构建文件与固定依赖。`scripts/release/` 只打包白名单部署文件，`scripts/ops/` 保存通用恢复工具。`tests/browser/` 和 `tests/performance/` 分别保存浏览器与隔离容量验证。较早的原生 systemd/Ubuntu 脚本保留供已有部署恢复与追溯。
 
 ## 根目录
 

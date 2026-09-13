@@ -1,0 +1,32 @@
+{$PUBLIC_SITE} {
+    @private path /ops /ops/* /admin /admin/*
+    handle @private {
+        respond 404
+    }
+    handle_path /static/* {
+        root * /srv/static
+        file_server
+    }
+    handle {
+        reverse_proxy backend:8000 {
+            header_up X-Real-IP {http.request.remote.host}
+        }
+    }
+}
+
+{$ADMIN_SITE} {
+    @wrong_origin {
+        method POST PUT PATCH DELETE
+        not header Origin {$ADMIN_ORIGIN}
+    }
+    respond @wrong_origin 403
+    handle_path /static/* {
+        root * /srv/static
+        file_server
+    }
+    handle {
+        reverse_proxy backend:8000 {
+            header_up X-Real-IP {http.request.remote.host}
+        }
+    }
+}

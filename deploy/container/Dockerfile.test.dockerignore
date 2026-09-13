@@ -1,0 +1,8 @@
+**
+!tests/
+!tests/**
+!deploy/
+!deploy/**
+!.gitattributes
+**/__pycache__/
+**/*.pyc

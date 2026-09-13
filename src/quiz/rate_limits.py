@@ -2,9 +2,12 @@
 
 import ipaddress
 import logging
+import socket
+import time
 from dataclasses import dataclass
 from datetime import timedelta
 from decimal import ROUND_CEILING, ROUND_DOWN, Decimal
+from functools import lru_cache
 
 from django.conf import settings
 from django.db import DatabaseError, connection, transaction
@@ -41,6 +44,16 @@ class RateLimitUnavailable(Exception):
     pass
 
 
+@lru_cache(maxsize=8)
+def _proxy_addresses(hosts: tuple[str, ...], cache_slot: int) -> frozenset:
+    """Resolve only operator-configured services, refreshing after container recreation."""
+    return frozenset(
+        ipaddress.ip_address(record[4][0])
+        for host in hosts
+        for record in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+    )
+
+
 def client_ip(request) -> str:
     """Only a configured proxy may assert X-Real-IP; external headers are ignored."""
     try:
@@ -48,8 +61,12 @@ def client_ip(request) -> str:
         trusted = any(
             peer in ipaddress.ip_network(cidr) for cidr in settings.QUIZ_TRUSTED_PROXY_CIDRS
         )
+        if not trusted and settings.QUIZ_TRUSTED_PROXY_HOSTS:
+            trusted = peer in _proxy_addresses(
+                tuple(settings.QUIZ_TRUSTED_PROXY_HOSTS), int(time.monotonic() // 30)
+            )
         address = ipaddress.ip_address(request.META.get("HTTP_X_REAL_IP", "")) if trusted else peer
-    except ValueError as error:
+    except (ValueError, OSError) as error:
         raise RateLimitUnavailable from error
     if address.version == 6:
         if address.ipv4_mapped:

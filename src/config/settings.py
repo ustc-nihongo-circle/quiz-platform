@@ -162,3 +162,7 @@ QUIZ_TRUSTED_PROXY_CIDRS = [
     value.strip() for value in os.getenv("QUIZ_TRUSTED_PROXY_CIDRS", "").split(",")
     if value.strip()
 ]
+QUIZ_TRUSTED_PROXY_HOSTS = [
+    value.strip() for value in os.getenv("QUIZ_TRUSTED_PROXY_HOSTS", "").split(",")
+    if value.strip()
+]

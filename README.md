@@ -6,6 +6,8 @@ USTC 日语协会维护的活动答题平台。公开仓库为 `ustc-nihongo-cir
 
 下一版将以独立版本交付 Vue/TypeScript 双端、主题切换、跨活动用户中心和多选题。在对应版本发布前，不把这些计划功能视为当前基线已有功能。旧实验室验收文档描述各自标注日期的环境，不代表当前服务器状态。
 
+直接部署请下载 [GitHub Releases](https://github.com/ustc-nihongo-circle/quiz-platform/releases) 中的 `quiz-platform-v1.0.0.zip`，按照[联网部署、备份与恢复说明](docs/deployment-release.md)操作。镜像已构建，首次初始化生成独立密钥，默认只在本机演示。下文是源码开发入口。
+
 ## 当前技术基线
 
 - Python 3.12 至 3.14
