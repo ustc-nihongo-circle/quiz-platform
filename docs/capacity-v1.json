@@ -1,0 +1,145 @@
+{
+  "date": "2026-09-13",
+  "baseline": "records-20260912",
+  "syntheticOnly": true,
+  "resource_limits": {
+    "application_cpu": 1,
+    "application_memory_mib": 512,
+    "database_cpu": 0.5,
+    "database_memory_mib": 512
+  },
+  "conditions": {
+    "shared_ip": true,
+    "period_seconds": 75,
+    "think_seconds": 20,
+    "questions_per_attempt": 15,
+    "question_bank_size": 378,
+    "image_references": 28,
+    "original_gunicorn_sync_workers": 2
+  },
+  "stable": {
+    "workers": 20,
+    "elapsed_seconds": 900.0076585490024,
+    "rounds": 12,
+    "passed": true,
+    "scores_ok": true,
+    "metrics": {
+      "read": {
+        "requests": 240,
+        "failures": 0,
+        "rate_limited": 0,
+        "p95": 0.30495417991187423,
+        "p99": 0.3623382339719683
+      },
+      "register": {
+        "requests": 20,
+        "failures": 0,
+        "rate_limited": 0,
+        "p95": 0.16841409297194332,
+        "p99": 0.17418725101742893
+      },
+      "start": {
+        "requests": 240,
+        "failures": 0,
+        "rate_limited": 0,
+        "p95": 1.6295729569392279,
+        "p99": 1.8159661300014704
+      },
+      "image": {
+        "requests": 291,
+        "failures": 0,
+        "rate_limited": 0,
+        "p95": 0.2510115780169144,
+        "p99": 0.28373885399196297
+      },
+      "submit": {
+        "requests": 240,
+        "failures": 0,
+        "rate_limited": 0,
+        "p95": 1.5658802629914135,
+        "p99": 1.8697197679430246
+      },
+      "retry": {
+        "requests": 240,
+        "failures": 0,
+        "rate_limited": 0,
+        "p95": 1.104372616042383,
+        "p99": 1.2931695100851357
+      }
+    }
+  },
+  "failed_probe": {
+    "workers": 50,
+    "elapsed_seconds": 33.99428840901237,
+    "rounds": 1,
+    "passed": false,
+    "scores_ok": true,
+    "metrics": {
+      "read": {
+        "requests": 50,
+        "failures": 0,
+        "rate_limited": 0,
+        "p95": 0.663388900924474,
+        "p99": 0.6772507861023769
+      },
+      "register": {
+        "requests": 50,
+        "failures": 0,
+        "rate_limited": 0,
+        "p95": 0.5869326080428436,
+        "p99": 0.5973609599750489
+      },
+      "start": {
+        "requests": 50,
+        "failures": 0,
+        "rate_limited": 0,
+        "p95": 3.16050809295848,
+        "p99": 3.2922543849563226
+      },
+      "image": {
+        "requests": 59,
+        "failures": 0,
+        "rate_limited": 0,
+        "p95": 0.7947695979382843,
+        "p99": 0.8187956380425021
+      },
+      "submit": {
+        "requests": 50,
+        "failures": 0,
+        "rate_limited": 0,
+        "p95": 4.24360239400994,
+        "p99": 4.441455356078222
+      },
+      "retry": {
+        "requests": 50,
+        "failures": 0,
+        "rate_limited": 0,
+        "p95": 2.5497584550175816,
+        "p99": 2.704285316984169
+      }
+    }
+  },
+  "resources_first_890_seconds": {
+    "application": {
+      "sampled_cpu_percent_peak": 104.98,
+      "sampled_memory_percent_peak": 22.5
+    },
+    "database": {
+      "sampled_cpu_percent_peak": 24.99,
+      "sampled_memory_percent_peak": 29.48
+    },
+    "sampled_connections_peak": 2,
+    "sampled_lock_wait_peak": 0
+  },
+  "stopped_exploration": {
+    "workers": 30,
+    "reason": "Scope limited to archive release; insufficient duration; excluded from capacity result"
+  },
+  "limitations": [
+    "Original deployed runtime measured; deployment bundle topology differs",
+    "No internet last-mile load in loopback TLS test",
+    "Registration in stable tier resumed synthetic accounts",
+    "Admin refresh and pagination beyond page 1 not measured",
+    "Sampled resource peaks may miss short spikes"
+  ]
+}

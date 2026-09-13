@@ -25,6 +25,8 @@ def main():
     files = {name: ROOT / "deploy/bundle" / name for name in BUNDLE_FILES}
     files.update({"README.md": ROOT / "docs/deployment-release.md",
                   "LICENSE": ROOT / "LICENSE", "NOTICE.md": ROOT / "NOTICE.md"})
+    asset_notice = "src/quiz/static/quiz/assets/README.md"
+    files[asset_notice] = ROOT / asset_notice
     with zipfile.ZipFile(target, "x", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr(stem + "/release.json", json.dumps(manifest, indent=2) + "\n")
         for name, source in files.items():
