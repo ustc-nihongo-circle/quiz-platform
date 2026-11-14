@@ -322,8 +322,6 @@
   </div>
 
   <div class="sr-only" id="globalAnnouncer" aria-live="polite"></div>
-  {{ initial_participant|json_script:"initialParticipant" }}
-  {{ initial_attempt|json_script:"initialAttempt" }}
-  <script src="{% static 'quiz/participant.js' %}?v=20260912-records1" defer></script>
+  <script src="{% static 'quiz/participant.js' %}?v=participant-v2" defer></script>
 </body>
 </html>

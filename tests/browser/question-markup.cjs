@@ -19,12 +19,12 @@ async function screen(p,name){await p.waitForFunction(s=>document.body.dataset.s
    let attemptedUnsafeRequests=0,attempt=null;
    page.on('request',r=>{if(r.url().includes('/markup-probe'))attemptedUnsafeRequests++;});
    if(localSource) await page.route('**/static/quiz/participant.js*',r=>r.fulfill({contentType:'application/javascript',body:fs.readFileSync('src/quiz/static/quiz/participant.js','utf8')}));
-   await page.route('**/api/v1/**',r=>{
+   await page.route('**/api/v2/**',r=>{
     const p=new URL(r.request().url()).pathname;
-    if(p==='/api/v1/activity')return r.fulfill({json:{activity:{code:'isolated-markup',status:'open',categories:[{code:'demo',title:'表示検証',question_count:3,time_limit_seconds:300}]}}});
-    if(p==='/api/v1/participant-session')return r.fulfill({status:201,json:{created:true,participant:{id:'synthetic-markup',display_name:'表示検証'}}});
-    if(p==='/api/v1/attempts/current')return r.fulfill({status:404,json:{error:{code:'attempt_not_found'}}});
-    if(p==='/api/v1/attempts') {attempt={id:'markup-attempt',status:'in_progress',category:{code:'demo',title:'表示検証'},started_at:new Date().toISOString(),deadline_at:new Date(Date.now()+300000).toISOString(),question_count:3,questions};return r.fulfill({status:201,json:{attempt,created:true}});}
+    if(p==='/api/v2/activity')return r.fulfill({json:{activity:{code:'isolated-markup',status:'open',categories:[{code:'demo',title:'表示検証',question_count:3,time_limit_seconds:300}]}}});
+    if(p==='/api/v2/participant-session' && r.request().method()==='GET')return r.fulfill({json:{server_time:new Date().toISOString(),session:null}});
+    if(p==='/api/v2/participant-session')return r.fulfill({status:201,json:{created:true,participant:{id:'synthetic-markup',display_name:'表示検証'}}});
+    if(p==='/api/v2/attempts') {attempt={id:'markup-attempt',status:'in_progress',category:{code:'demo',title:'表示検証'},started_at:new Date().toISOString(),deadline_at:new Date(Date.now()+300000).toISOString(),question_count:3,questions};return r.fulfill({status:201,json:{attempt,created:true}});}
     if(p.endsWith('/submission'))return r.fulfill({json:{attempt:{...attempt,status:'submitted',score:0,score_rate:0,category_high_score:0,questions:questions.map(q=>({...q,correct:false,answer:'A'}))}}});
     throw new Error('Unexpected intercepted request');
    });

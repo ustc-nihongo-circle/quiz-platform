@@ -253,6 +253,8 @@ def attempts_collection(request: HttpRequest) -> JsonResponse:
             participant=participant,
             category_code=str(payload.get("category_code", "")),
         )
+    except ParticipantSessionRevoked:
+        return api_error("participant_session_required", "请先登记或再次进入。", status=401)
     except (RateLimited, RateLimitUnavailable) as error:
         return rate_limit_error(error)
     except ActivityNotOpen:

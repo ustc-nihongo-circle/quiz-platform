@@ -358,6 +358,7 @@ def start_attempt(
     category_code: str,
     now=None,
     rng: random.Random | random.SystemRandom | None = None,
+    require_entry=False,
 ) -> AttemptStartResult:
     now = now or timezone.now()
     rng = rng or random.SystemRandom()
@@ -366,6 +367,8 @@ def start_attempt(
         pk=participant.pk,
         activity=activity,
     )
+    if participant.anonymized_at is not None:
+        raise ParticipantSessionRevoked
     existing = (
         QuizAttempt.objects.select_for_update()
         .filter(participant=participant, status=AttemptStatus.IN_PROGRESS)
@@ -376,7 +379,9 @@ def start_attempt(
             return AttemptStartResult(existing, False)
         existing.status = AttemptStatus.TIMED_OUT
         existing.save(update_fields=("status", "updated_at"))
-    if activity.status != ActivityStatus.OPEN:
+    if activity.status != ActivityStatus.OPEN or (
+        require_entry and not activity.is_participant_entry
+    ):
         raise ActivityNotOpen("The activity is not open for new attempts.")
     try:
         category = activity.category_configs.get(category_key=category_code)

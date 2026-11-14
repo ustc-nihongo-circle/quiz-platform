@@ -8,20 +8,27 @@ from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_http_methods
 
 from .api import (
+    activity_detail,
     api_error,
     parse_json_object,
+    participant_session,
     question_image_response,
+    rate_limit_error,
     session_participant,
     validation_error_response,
 )
 from .models import AttemptItem, AttemptStatus, QuizAttempt
 from .participant_history import history_response, refresh_current_attempt
+from .rate_limits import RateLimited, RateLimitUnavailable
 from .services import (
+    ActivityNotOpen,
     AttemptExpired,
     AttemptInvalidated,
     ParticipantSessionRevoked,
+    QuestionBankUnavailable,
     refresh_attempt_timeout,
     serialize_attempt,
+    start_attempt,
     submit_attempt,
 )
 
@@ -56,7 +63,18 @@ def attempt_reference(attempt):
 
 
 @private_response
-@require_GET
+def activity(request):
+    return activity_detail(request)
+
+
+@private_response
+@require_http_methods(["GET", "POST", "DELETE"])
+def session(request):
+    if request.method == "GET":
+        return session_snapshot(request)
+    return participant_session(request)
+
+
 @ensure_csrf_cookie
 def session_snapshot(request):
     participant = session_participant(request, require_identity=True)
@@ -76,6 +94,47 @@ def session_snapshot(request):
             "latest_attempt": attempt_reference(latest),
         }
     return JsonResponse({"server_time": now.isoformat(), "session": session})
+
+
+@private_response
+@require_http_methods(["POST"])
+def attempt_start(request):
+    participant = session_participant(request, require_identity=True)
+    if participant is None:
+        return session_required()
+    if request.content_type != "application/json":
+        return api_error("unsupported_media_type", "请使用 JSON 开卷。", status=415)
+    try:
+        payload = parse_json_object(request, max_bytes=SUBMISSION_BODY_LIMIT)
+        category = payload.get("category_code")
+        if (
+            set(payload) != {"category_code"} or not isinstance(category, str)
+            or not category or "\x00" in category
+            or any("\ud800" <= char <= "\udfff" for char in category)
+        ):
+            raise ValidationError({"category_code": "请填写板块代码。"})
+        result = start_attempt(
+            participant=participant, category_code=category, require_entry=True
+        )
+    except RequestDataTooBig:
+        return api_error("request_too_large", "请求超过大小限制。", status=413)
+    except ValidationError as error:
+        return validation_error_response(error)
+    except ParticipantSessionRevoked:
+        return session_required()
+    except (RateLimited, RateLimitUnavailable) as error:
+        return rate_limit_error(error)
+    except ActivityNotOpen:
+        return api_error("activity_not_open", "当前活动不接受新答题。", status=409)
+    except QuestionBankUnavailable:
+        return api_error(
+            "question_bank_unavailable", "该板块暂时无法开始，请联系活动管理员。",
+            status=409, retryable=True,
+        )
+    return JsonResponse(
+        {"attempt": serialize_attempt(result.attempt, api_version=2)},
+        status=201 if result.created else 200,
+    )
 
 
 @private_response

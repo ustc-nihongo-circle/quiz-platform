@@ -15,12 +15,13 @@ const base=process.env.QUIZ_TEST_URL;
    let attempt;
    page.on('request',r=>{if(r.url().includes('/security-probe'))counts.unsafe++;});
    if(process.env.QUIZ_LOCAL_JS==='1') await page.route('**/static/quiz/participant.js*',r=>r.fulfill({contentType:'application/javascript',body:fs.readFileSync('src/quiz/static/quiz/participant.js','utf8')}));
-   await page.route('**/api/v1/**',r=>{
+   await page.route('**/api/v2/**',r=>{
     const path=new URL(r.request().url()).pathname;
     const limited=()=>r.fulfill({status:429,headers:{'Retry-After':'2'},json:{error:{code:'rate_limited',message:'请稍后重试',retryable:true,retry_after_seconds:2}}});
-    if(path==='/api/v1/activity')return r.fulfill({json:{activity:{code:'security-test',status:'open',categories:[{code:malicious,title:malicious,question_count:1,time_limit_seconds:300}]}}});
-    if(path==='/api/v1/participant-session') {counts.register++;return counts.register===1?limited():r.fulfill({status:201,json:{created:true,participant:{id:'security-test',display_name:'合成用户'}}});}
-    if(path==='/api/v1/attempts') {
+    if(path==='/api/v2/activity')return r.fulfill({json:{activity:{code:'security-test',status:'open',categories:[{code:malicious,title:malicious,question_count:1,time_limit_seconds:300}]}}});
+    if(path==='/api/v2/participant-session' && r.request().method()==='GET')return r.fulfill({json:{server_time:new Date().toISOString(),session:null}});
+    if(path==='/api/v2/participant-session') {counts.register++;return counts.register===1?limited():r.fulfill({status:201,json:{created:true,participant:{id:'security-test',display_name:'合成用户'}}});}
+    if(path==='/api/v2/attempts') {
      counts.start++;if(counts.start===1)return limited();
      attempt={id:'security-attempt',status:'in_progress',category:{code:'synthetic',title:'测试板块'},question_count:1,started_at:new Date().toISOString(),deadline_at:new Date(Date.now()+300000).toISOString(),questions:[{id:'q',position:1,type:'fill_blank',prompt:'合成填空题',image_url:null,options:[]}]};
      return r.fulfill({status:201,json:{attempt}});

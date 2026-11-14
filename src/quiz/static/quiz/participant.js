@@ -1,5 +1,5 @@
 const MOCK_MODE = false;
-const API_ROOT = "/api/v1";
+const API_ROOT = "/api/v2";
 const MOCK_STATE_KEY = "ustc-nihongo-quiz:mock-server:v4";
 const UI_PARTICIPANT_KEY = "ustc-nihongo-quiz:participant";
 const UI_LAST_ATTEMPT_KEY = "ustc-nihongo-quiz:last-attempt";
@@ -9,7 +9,6 @@ const endpoint = {
   activity: `${API_ROOT}/activity`,
   participantSession: `${API_ROOT}/participant-session`,
   attempts: `${API_ROOT}/attempts`,
-  currentAttempt: `${API_ROOT}/attempts/current`,
   history: (page) => `${API_ROOT}/attempts/history?page=${page}`,
   attempt: (attemptId) => `${API_ROOT}/attempts/${attemptId}`,
   submission: (attemptId) => `${API_ROOT}/attempts/${attemptId}/submission`,
@@ -146,7 +145,7 @@ function createQuestions() {
     ["首次封存结果", "覆盖为新答案", "新建第二条记录", "删除旧结果"],
     ["读取服务端状态", "自行增加三秒", "重置五分钟", "继续离线计分"],
     ["响应中的不透明 item id", "题号文本", "数组下标拼接值", "选项字母"],
-    ["GET /api/v1/activity", "本地固定数组", "结果页缓存", "管理员截图"],
+    ["GET /api/v2/activity", "本地固定数组", "结果页缓存", "管理员截图"],
     ["参与者 Session 与当前标签页草稿", "正式题库", "活动配置", "其他人的结果"],
     ["使用即时滚动", "继续平滑滚动", "禁止页面切换", "隐藏焦点"],
     ["原型资产说明", "题目答案", "浏览器 Cookie", "参与者显示名"],
@@ -304,7 +303,6 @@ class MockTransport {
     if (path === endpoint.participantSession && method === "POST") return "register";
     if (path === endpoint.participantSession && method === "DELETE") return "clear";
     if (path === endpoint.attempts && method === "POST") return "start";
-    if (path === endpoint.currentAttempt) return "resume";
     if (path.endsWith("/submission")) return "submit";
     return "read";
   }
@@ -386,19 +384,23 @@ class MockTransport {
       return null;
     }
 
-    if (!this.state.sessionParticipant) {
-      throw new ApiError({ code: "participant_session_required", message: "请先登记或再次进入。", retryable: false }, 401);
+    if (path === endpoint.participantSession && method === "GET") {
+      this.refreshTimeout();
+      const attempt = this.state.attempt;
+      const latest = attempt ? {id: attempt.id, status: attempt.status} : null;
+      return {
+        server_time: new Date().toISOString(),
+        session: this.state.sessionParticipant ? {
+          participant: deepClone(this.state.sessionParticipant),
+          activity_code: this.state.activity.code,
+          current_attempt: latest?.status === "in_progress" ? latest : null,
+          latest_attempt: latest,
+        } : null,
+      };
     }
 
-    if (path === endpoint.currentAttempt && method === "GET") {
-      this.refreshTimeout();
-      if (!this.state.attempt || this.state.attempt.status !== "in_progress") {
-        if (this.state.attempt?.status === "timed_out") {
-          return { attempt: deepClone(this.state.attempt) };
-        }
-        throw new ApiError({ code: "attempt_not_found", message: "当前没有进行中的答题。", retryable: false }, 404);
-      }
-      return { attempt: deepClone(this.state.attempt) };
+    if (!this.state.sessionParticipant) {
+      throw new ApiError({ code: "participant_session_required", message: "请先登记或再次进入。", retryable: false }, 401);
     }
 
     if (path === endpoint.attempts && method === "POST") {
@@ -522,7 +524,7 @@ class QuizApi {
   activity() { return this.transport.request(endpoint.activity); }
   register(payload) { return this.transport.request(endpoint.participantSession, { method: "POST", body: JSON.stringify(payload) }); }
   clearSession() { return this.transport.request(endpoint.participantSession, { method: "DELETE" }); }
-  currentAttempt() { return this.transport.request(endpoint.currentAttempt); }
+  session() { return this.transport.request(endpoint.participantSession); }
   history(page) { return this.transport.request(endpoint.history(page)); }
   attempt(attemptId) { return this.transport.request(endpoint.attempt(attemptId)); }
   startAttempt(categoryCode) { return this.transport.request(endpoint.attempts, { method: "POST", body: JSON.stringify({ category_code: categoryCode }) }); }
@@ -534,8 +536,6 @@ class UiSessionStore {
     try { return JSON.parse(sessionStorage.getItem(UI_PARTICIPANT_KEY) || "null"); } catch { return null; }
   }
   saveParticipant(participant) { sessionStorage.setItem(UI_PARTICIPANT_KEY, JSON.stringify(participant)); }
-  lastAttemptId() { return sessionStorage.getItem(UI_LAST_ATTEMPT_KEY); }
-  saveLastAttemptId(attemptId) { sessionStorage.setItem(UI_LAST_ATTEMPT_KEY, attemptId); }
   clear() {
     sessionStorage.removeItem(UI_PARTICIPANT_KEY);
     sessionStorage.removeItem(UI_LAST_ATTEMPT_KEY);
@@ -639,19 +639,6 @@ const transport = MOCK_MODE ? new MockTransport() : new HttpTransport();
 const api = new QuizApi(transport);
 const uiStore = new UiSessionStore();
 const modal = new ModalController(document.getElementById("modalLayer"), document.getElementById("pageRoot"));
-const initialParticipantElement = document.getElementById("initialParticipant");
-const initialParticipant = initialParticipantElement
-  ? JSON.parse(initialParticipantElement.textContent)
-  : null;
-const initialAttemptElement = document.getElementById("initialAttempt");
-const initialAttempt = initialAttemptElement
-  ? JSON.parse(initialAttemptElement.textContent)
-  : null;
-// A previous tab's UI cache cannot authenticate the current server session.
-if (!MOCK_MODE) {
-  if (initialParticipant) uiStore.saveParticipant(initialParticipant);
-  else uiStore.clear();
-}
 
 function safeAsync(action) {
   return async (...args) => {
@@ -692,7 +679,8 @@ const app = {
   answers: {},
   countdownTimer: null,
   checkingTimeout: false,
-  initialStateConsumed: false,
+  sessionActivityCode: null,
+  clockOffsetMs: 0,
   retryActions: new Map(),
   historyPage: 1,
   historyPages: 1,
@@ -780,59 +768,39 @@ const app = {
     this.answers = {};
     this.screen("boot");
     try {
-      const activityResponse = await api.activity();
-      this.activity = activityResponse.activity;
-      this.participant = uiStore.participant();
+      const {session, server_time: serverTime} = await api.session();
+      this.clockOffsetMs = Date.parse(serverTime) - Date.now();
+      const cached = uiStore.participant();
+      if (session) {
+        if (cached && cached.id !== session.participant.id) uiStore.clearAllDrafts();
+        this.participant = session.participant;
+        uiStore.saveParticipant(this.participant);
+      } else {
+        this.participant = null;
+        uiStore.clear();
+      }
+      this.sessionActivityCode = session?.activity_code ?? null;
+      try {
+        this.activity = (await api.activity()).activity;
+      } catch (error) {
+        this.activity = null;
+        if (!(error instanceof ApiError) || error.code !== "activity_unavailable") throw error;
+        this.activity = {code: "", status: "closed", categories: []};
+      }
       this.renderActivity();
 
       if (!this.participant) {
-        this.initialStateConsumed = true;
         this.screen("register");
         return;
       }
 
-      if (!this.initialStateConsumed) {
-        this.initialStateConsumed = true;
-        if (initialAttempt) {
-          this.currentAttempt = initialAttempt;
-          uiStore.saveLastAttemptId(initialAttempt.id);
-          this.routeAttempt(initialAttempt);
-        } else {
-          this.renderSections();
-        }
+      const reference = session.current_attempt ?? session.latest_attempt;
+      if (!reference) {
+        this.renderSections();
         return;
       }
-
-      try {
-        const currentResponse = await api.currentAttempt();
-        this.currentAttempt = currentResponse.attempt;
-        uiStore.saveLastAttemptId(this.currentAttempt.id);
-        this.routeAttempt(this.currentAttempt);
-        return;
-      } catch (error) {
-        if (!(error instanceof ApiError) || !["attempt_not_found", "participant_session_required"].includes(error.code)) throw error;
-        if (error.code === "participant_session_required") {
-          uiStore.clear();
-          uiStore.clearAllDrafts();
-          this.participant = null;
-          this.screen("register");
-          return;
-        }
-      }
-
-      const lastAttemptId = uiStore.lastAttemptId();
-      if (lastAttemptId) {
-        try {
-          const detail = await api.attempt(lastAttemptId);
-          if (["submitted", "timed_out", "invalid"].includes(detail.attempt.status)) {
-            this.routeAttempt(detail.attempt);
-            return;
-          }
-        } catch (error) {
-          if (!(error instanceof ApiError) || error.code !== "attempt_not_found") throw error;
-        }
-      }
-      this.renderSections();
+      const {attempt} = await api.attempt(reference.id);
+      this.routeAttempt(attempt);
     } catch (error) {
       document.getElementById("activityStatusText").textContent = "活动信息加载失败";
       this.errorFeedback("registrationFeedback", error, () => this.bootstrap());
@@ -844,7 +812,10 @@ const app = {
     if (attempt.status === "in_progress") this.renderQuiz(attempt);
     else if (attempt.status === "submitted") this.renderResult(attempt);
     else if (attempt.status === "timed_out") this.renderTimeout(attempt);
-    else this.renderSections();
+    else {
+      this.currentAttempt = null;
+      this.renderSections();
+    }
   },
 
   renderSections() {
@@ -860,7 +831,7 @@ const app = {
       document.getElementById("resumeSummary").textContent = `截止 ${deadlineText(current.deadline_at)} · 本机暂存 ${Object.keys(uiStore.draft(current.id)).length} / ${current.question_count} 题`;
     }
 
-    const canStart = this.activity.status === "open" && !current;
+    const canStart = this.activity.status === "open" && this.activity.code === this.sessionActivityCode && !current;
     const grid = document.getElementById("categoryGrid");
     grid.replaceChildren();
     this.activity.categories.forEach((category, index) => {
@@ -1005,21 +976,27 @@ const app = {
         }
       }
       const response = await api.register(payload);
+      const cached = uiStore.participant();
+      if (cached && cached.id !== response.participant.id) uiStore.clearAllDrafts();
       this.participant = response.participant;
+      this.sessionActivityCode = this.activity.code;
       uiStore.saveParticipant(response.participant);
       this.feedback("registrationFeedback", "success", response.created ? "登记成功。" : "已恢复原参与者记录。正在检查进行中答题…");
       if (response.created) {
         this.renderSections();
         return;
       }
-      try {
-        const current = await api.currentAttempt();
-        this.currentAttempt = current.attempt;
-        uiStore.saveLastAttemptId(current.attempt.id);
-        this.routeAttempt(current.attempt);
-      } catch (error) {
-        if (error instanceof ApiError && error.code === "attempt_not_found") this.renderSections();
-        else throw error;
+      const {session} = await api.session();
+      if (!session) {
+        await this.bootstrap();
+        return;
+      }
+      this.sessionActivityCode = session.activity_code;
+      if (session.current_attempt) {
+        const {attempt} = await api.attempt(session.current_attempt.id);
+        this.routeAttempt(attempt);
+      } else {
+        this.renderSections();
       }
     } catch (error) {
       this.errorFeedback("registrationFeedback", error, () => this.register(form));
@@ -1064,7 +1041,6 @@ const app = {
     try {
       const response = await api.startAttempt(categoryCode);
       this.currentAttempt = response.attempt;
-      uiStore.saveLastAttemptId(response.attempt.id);
       this.feedback("attemptFeedback", "success", "答题记录已准备。将使用服务端返回的题目顺序和截止时间。");
       this.renderQuiz(response.attempt);
     } catch (error) {
@@ -1081,9 +1057,8 @@ const app = {
     trigger.textContent = "正在恢复…";
     this.feedback("attemptFeedback", "loading", "正在读取当前答题和服务端状态…");
     try {
-      const response = await api.currentAttempt();
+      const response = await api.attempt(this.currentAttempt.id);
       this.currentAttempt = response.attempt;
-      uiStore.saveLastAttemptId(response.attempt.id);
       this.routeAttempt(response.attempt);
     } catch (error) {
       this.errorFeedback("attemptFeedback", error, () => this.resumeAttempt(trigger));
@@ -1234,7 +1209,7 @@ const app = {
   startCountdown() {
     this.stopCountdown();
     const tick = () => {
-      const remainingMs = Date.parse(this.currentAttempt.deadline_at) - Date.now();
+      const remainingMs = Date.parse(this.currentAttempt.deadline_at) - Date.now() - this.clockOffsetMs;
       const remainingSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
       const minutes = Math.floor(remainingSeconds / 60);
       const seconds = remainingSeconds % 60;
@@ -1255,24 +1230,20 @@ const app = {
   },
 
   async confirmTimeoutFromServer() {
-    if (this.checkingTimeout) return;
+    if (this.checkingTimeout || document.body.dataset.screen !== "quiz") return;
+    const id = this.currentAttempt.id;
     this.checkingTimeout = true;
     this.feedback("quizFeedback", "loading", "倒计时已归零，正在读取服务端状态…");
     try {
-      const response = await api.currentAttempt();
-      this.currentAttempt = response.attempt;
-      if (response.attempt.status === "timed_out") this.renderTimeout(response.attempt);
+      const {attempt} = await api.attempt(id);
+      if (document.body.dataset.screen !== "quiz" || this.currentAttempt?.id !== id) return;
+      if (attempt.status !== "in_progress") this.routeAttempt(attempt);
       else {
         this.feedback("quizFeedback", "loading", "服务端仍将本轮视为进行中，正在再次确认…");
         window.setTimeout(() => this.confirmTimeoutFromServer(), 500);
       }
     } catch (error) {
-      if (error instanceof ApiError && error.code === "attempt_not_found") {
-        const detail = await api.attempt(this.currentAttempt.id);
-        this.routeAttempt(detail.attempt);
-      } else {
-        this.errorFeedback("quizFeedback", error, () => this.confirmTimeoutFromServer());
-      }
+      this.errorFeedback("quizFeedback", error, () => this.confirmTimeoutFromServer());
     } finally {
       this.checkingTimeout = false;
     }
@@ -1305,7 +1276,6 @@ const app = {
       const response = await api.submitAttempt(this.currentAttempt.id, answers);
       modal.close({ restoreFocus: false });
       uiStore.clearDraft(this.currentAttempt.id);
-      uiStore.saveLastAttemptId(response.attempt.id);
       this.renderResult(response.attempt);
     } catch (error) {
       modal.close();
@@ -1326,7 +1296,6 @@ const app = {
     if (!modal.layer.hidden) modal.close({ restoreFocus: false });
     this.currentAttempt = attempt;
     uiStore.clearDraft(attempt.id);
-    uiStore.saveLastAttemptId(attempt.id);
     document.getElementById("timeoutCategory").textContent = attempt.category.title;
     document.getElementById("timeoutDeadline").textContent = deadlineText(attempt.deadline_at);
     document.getElementById("timeoutStatus").textContent = attempt.status;
@@ -1342,7 +1311,6 @@ const app = {
     this.resultAttempt = attempt;
     if (!historical) {
       this.currentAttempt = null;
-      uiStore.saveLastAttemptId(attempt.id);
     }
     document.getElementById("resultCategory").textContent = `${attempt.category.title} / ${historical ? "历史答题" : "本次挑战"}`;
     document.getElementById("resultScore").textContent = attempt.score;
@@ -1393,7 +1361,6 @@ function syncReviewSession(metadata) {
   uiStore.clear();
   uiStore.clearAllDrafts();
   if (metadata.participant) uiStore.saveParticipant(metadata.participant);
-  if (metadata.attemptId) uiStore.saveLastAttemptId(metadata.attemptId);
 }
 
 function recordTime(value) {
@@ -1478,7 +1445,6 @@ function initializeReviewScenario() {
     syncReviewSession(transport.setScenario(requested));
   } else if (transport.state.sessionParticipant && !uiStore.participant()) {
     uiStore.saveParticipant(transport.state.sessionParticipant);
-    if (transport.state.attempt) uiStore.saveLastAttemptId(transport.state.attempt.id);
   }
   document.querySelectorAll("[data-review-scenario]").forEach((button) => {
     button.classList.toggle("is-current", button.dataset.reviewScenario === transport.state.scenario);

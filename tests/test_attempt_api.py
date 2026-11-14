@@ -1,5 +1,4 @@
 import json
-import re
 import uuid
 
 import pytest
@@ -426,7 +425,7 @@ def test_reward_is_snapshotted_and_invalidation_recomputes_high_score():
 
 
 @pytest.mark.django_db
-def test_participant_page_bootstraps_the_current_attempt_without_answers(client):
+def test_participant_page_leaves_current_attempt_to_the_session_api(client):
     create_open_quiz()
     register(client)
     started = client.post(
@@ -436,12 +435,7 @@ def test_participant_page_bootstraps_the_current_attempt_without_answers(client)
     ).json()["attempt"]
 
     page = client.get("/participant/").content.decode()
-    match = re.search(
-        r'<script id="initialAttempt" type="application/json">(.*?)</script>',
-        page,
-    )
-
-    assert match is not None
-    initial_attempt = json.loads(match.group(1))
-    assert initial_attempt["id"] == started["id"]
-    assert "correct_option" not in json.dumps(initial_attempt)
+    assert "initialAttempt" not in page
+    assert started["id"] not in page
+    session = client.get("/api/v2/participant-session").json()["session"]
+    assert session["current_attempt"] == {"id": started["id"], "status": "in_progress"}

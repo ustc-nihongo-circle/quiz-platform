@@ -36,7 +36,9 @@ urlpatterns = [
         attempt_submission,
         name="api-attempt-submission",
     ),
-    path("api/v2/participant-session", v2.session_snapshot, name="api-v2-participant-session"),
+    path("api/v2/activity", v2.activity, name="api-v2-activity"),
+    path("api/v2/participant-session", v2.session, name="api-v2-participant-session"),
+    path("api/v2/attempts", v2.attempt_start, name="api-v2-attempt-start"),
     path("api/v2/attempts/history", v2.attempt_history, name="api-v2-attempt-history"),
     path("api/v2/attempts/<uuid:attempt_id>", v2.attempt_detail, name="api-v2-attempt-detail"),
     path(

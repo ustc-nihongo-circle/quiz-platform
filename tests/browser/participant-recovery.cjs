@@ -16,9 +16,9 @@ const activity = {code:'network-check', status:'open', categories:[
       const page = await context.newPage();
       let activityCalls = 0, registrations = 0, recovered = false;
       await page.route(/\/static\/quiz\/participant.*\.js(?:\?|$)/, route => route.fulfill({contentType:'application/javascript',body:source}));
-      await page.route('**/api/v1/**', async route => {
+      await page.route('**/api/v2/**', async route => {
         const pathname = new URL(route.request().url()).pathname;
-        if (pathname === '/api/v1/activity') {
+        if (pathname === '/api/v2/activity') {
           activityCalls++;
           if (!recovered && scenario !== 'write-failure' && (scenario === 'persistent-failure' || activityCalls === 1)) {
             if (scenario === 'invalid-json') return route.fulfill({status:502,contentType:'text/html',body:'<html>Gateway unavailable</html>'});
@@ -27,7 +27,10 @@ const activity = {code:'network-check', status:'open', categories:[
           }
           return route.fulfill({json:{activity}});
         }
-        if (pathname === '/api/v1/participant-session') {
+        if (pathname === '/api/v2/participant-session') {
+          if (route.request().method() === 'GET') {
+            return route.fulfill({json:{server_time:new Date().toISOString(),session:null}});
+          }
           registrations++;
           if (scenario === 'write-failure' && registrations === 1) return route.fulfill({status:502,contentType:'text/html',body:'<html>Gateway unavailable</html>'});
           return route.fulfill({status:201,json:{created:true,participant:{id:'browser-fixture',display_name:'网络恢复验证',best_scores:{}}}});

@@ -6,7 +6,7 @@ from uuid import uuid4
 import pytest
 from django.test import Client
 from django.utils import timezone
-from test_attempt_api import create_open_quiz, register
+from test_attempt_api import create_open_quiz
 
 from quiz.identity import deidentify_participant
 from quiz.models import ActivityEdition, ActivityStatus, AttemptStatus, Participant, QuizAttempt
@@ -20,7 +20,9 @@ HISTORY_URL = "/api/v2/attempts/history"
 @pytest.fixture
 def quiz(client):
     activity = create_open_quiz()
-    assert register(client).status_code == 201
+    assert client.post(SESSION_URL, {
+        "display_name": "Demo", "identifier": "V2-DEMO", "contact": "demo@example.invalid",
+    }, content_type="application/json").status_code == 201
     participant = Participant.objects.get(activity=activity)
     return activity, participant
 
@@ -62,6 +64,54 @@ def test_v2_submission_uses_cookie_and_csrf_from_real_session(client, attempt):
     response = browser.put(url, payload, content_type="application/json", HTTP_X_CSRFTOKEN=csrf)
     assert response.status_code == 200
     assert response.json()["attempt"]["score"] == 0
+
+
+def test_v2_registration_opening_and_logout_use_the_same_session(client, quiz):
+    activity, participant = quiz
+    url = "/api/v2/attempts"
+    payload = {"category_code": "language"}
+    assert client.get("/api/v2/activity").json()["activity"]["code"] == activity.slug
+    assert_error(client.post(url, payload), 415, "unsupported_media_type")
+    assert_error(
+        client.post(url, {"category_code": False}, content_type="application/json"),
+        400, "validation_error",
+    )
+    started = client.post(url, payload, content_type="application/json")
+    assert started.status_code == 201
+    attempt = started.json()["attempt"]
+    images = [question["image_url"] for question in attempt["questions"] if question["image_url"]]
+    assert images and all(url.startswith("/api/v2/") for url in images)
+    activity.is_participant_entry = False
+    activity.save(update_fields=["is_participant_entry"])
+    assert_error(client.get("/api/v2/activity"), 404, "activity_unavailable")
+    repeated = client.post(url, payload, content_type="application/json")
+    assert repeated.status_code == 200
+    assert repeated.json()["attempt"] == attempt
+    client.put(f"{url}/{attempt['id']}/submission", {"answers": []},
+               content_type="application/json")
+    assert_error(client.post(url, payload, content_type="application/json"),
+                 409, "activity_not_open")
+    for _ in range(2):
+        response = client.delete(SESSION_URL)
+        assert response.status_code == 204
+        assert response["Cache-Control"] == "private, no-store"
+    assert_error(client.post(url, payload, content_type="application/json"),
+                 401, "participant_session_required")
+    activity.is_participant_entry = True
+    activity.status = ActivityStatus.PAUSED
+    activity.save(update_fields=["is_participant_entry", "status"])
+    registration = {
+        "display_name": "Changed", "identifier": "V2-DEMO", "contact": "demo@example.invalid",
+    }
+    wrong = dict(registration, contact="wrong@example.invalid")
+    assert_error(client.post(SESSION_URL, wrong, content_type="application/json"),
+                 409, "participant_recovery_required")
+    resumed = client.post(SESSION_URL, registration, content_type="application/json")
+    assert resumed.status_code == 200
+    assert resumed.json() == {
+        "created": False, "participant": {"id": str(participant.pk), "display_name": "Demo"},
+    }
+    assert client.get(HISTORY_URL).json()["attempts"][0]["id"] == attempt["id"]
 
 
 def test_session_recovers_across_entry_change_and_detects_expiry(client, quiz, attempt):

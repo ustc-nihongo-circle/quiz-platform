@@ -2,11 +2,6 @@ from django.db import DatabaseError, connection
 from django.http import JsonResponse
 from django.shortcuts import render
 from django.views.decorators.cache import never_cache
-from django.views.decorators.csrf import ensure_csrf_cookie
-
-from .api import session_participant
-from .models import AttemptStatus, QuizAttempt
-from .services import refresh_attempt_timeout, serialize_attempt
 
 
 def health(request):
@@ -26,31 +21,6 @@ def readiness(request):
 
 
 @never_cache
-@ensure_csrf_cookie
 def participant_page(request):
-    """Render the same-origin participant application shell."""
-    participant = session_participant(request, require_identity=True)
-    initial_participant = None
-    initial_attempt = None
-    if participant is not None:
-        initial_participant = {
-            "id": str(participant.pk),
-            "display_name": participant.identity.display_name,
-        }
-        attempt = (
-            QuizAttempt.objects.filter(participant=participant)
-            .order_by("-created_at")
-            .first()
-        )
-        if attempt is not None:
-            if attempt.status == AttemptStatus.IN_PROGRESS:
-                attempt = refresh_attempt_timeout(attempt)
-            initial_attempt = serialize_attempt(attempt)
-    return render(
-        request,
-        "quiz/participant.html",
-        {
-            "initial_attempt": initial_attempt,
-            "initial_participant": initial_participant,
-        },
-    )
+    """Render the participant shell. The browser restores state through the API."""
+    return render(request, "quiz/participant.html")

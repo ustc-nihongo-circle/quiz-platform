@@ -3,17 +3,48 @@ info:
   title: Quiz Platform 参与者 API
   version: 2.0.0
   description: |
-    前后端分离版的实现契约。本文件覆盖会话恢复、交卷、历史列表、答卷详情及其题图。
+    前后端分离版的参与者接口。完整流程使用 /api/v2。
     v1.0.0 发行版使用 /api/v1。前端和 API 通过网关同源访问。
     所有时间均带时区。会话、答卷和错误响应使用 Cache-Control: private, no-store。
     客户端按 HTTP 状态和 error.code 分支，message 用于显示。
     身份已被管理员去身份化时，原参与者会话失效。写请求的 CSRF 校验先于视图内的会话校验。
-    429 由启用限流的网关返回。
+    429 可来自网关或业务限流。触发限流后按 Retry-After 等待。
 servers:
   - url: /api/v2
 security:
   - ParticipantSession: []
 paths:
+  /activity:
+    get:
+      operationId: getActivity
+      summary: 获取当前入口届次和板块
+      security: []
+      responses:
+        '200':
+          description: 当前参与者入口，响应设置或续期 csrftoken Cookie。
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [activity]
+                additionalProperties: false
+                properties:
+                  activity:
+                    $ref: '#/components/schemas/Activity'
+        '404':
+          description: 未设置可用入口，错误码 activity_unavailable。已有会话仍可恢复答卷和查看历史。
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /participant-session:
     get:
       operationId: getParticipantSession
@@ -63,6 +94,131 @@ paths:
                         status: in_progress
         '429':
           $ref: '#/components/responses/RateLimited'
+    post:
+      operationId: registerParticipant
+      summary: 登记或再次进入本届活动
+      description: |
+        先读取会话接口获取 csrftoken，再提交登记。仅 open 届次接受首次登记。
+        paused 和 closed 仅允许登记资料匹配的参与者再次进入，保留原显示名。
+        按届次匹配编号与原联系方式。成功后更新浏览器 Session，响应仅包含内部 ID 和显示名。
+        额外请求字段忽略。原始长度限制见字段定义，规范化后分别最多 100、64、254 个字符。
+      security:
+        - CsrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Registration'
+      responses:
+        '200':
+          $ref: '#/components/responses/ParticipantRegistered'
+        '201':
+          $ref: '#/components/responses/ParticipantRegistered'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '403':
+          $ref: '#/components/responses/CsrfFailed'
+        '409':
+          description: 入口不可用为 activity_unavailable，资料无法匹配为 participant_recovery_required。
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: 登记正文超过 8 KiB，错误码 request_too_large。
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/RateLimitsUnavailable'
+    delete:
+      operationId: clearParticipantSession
+      summary: 清除当前浏览器的参与者会话
+      description: 幂等。保留答卷与身份记录，客户端清理当前标签页中的参与者状态和草稿。
+      security:
+        - CsrfToken: []
+        - CsrfToken: []
+          ParticipantSession: []
+      responses:
+        '204':
+          description: 参与者会话已清除或原本不存在
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+        '403':
+          $ref: '#/components/responses/CsrfFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /attempts:
+    post:
+      operationId: startAttempt
+      summary: 开卷或取回已有在途答卷
+      description: |
+        有未过期答卷时返回原答卷及截止时间，活动暂停、关闭或切换入口时也可取回。
+        只有当前入口的 open 届次可新建答卷。题序和截止时间由服务器确定。
+      security:
+        - ParticipantSession: []
+          CsrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [category_code]
+              additionalProperties: false
+              properties:
+                category_code:
+                  type: string
+                  minLength: 1
+                  description: 活动接口返回的板块代码。
+      responses:
+        '200':
+          $ref: '#/components/responses/InProgressAttempt'
+        '201':
+          $ref: '#/components/responses/InProgressAttempt'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/SessionRequired'
+        '403':
+          $ref: '#/components/responses/CsrfFailed'
+        '409':
+          description: 活动不接收新答卷为 activity_not_open，板块或题库不可用为 question_bank_unavailable。
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: 请求超过 1 MiB 正文限制，错误码 request_too_large。
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/RateLimitsUnavailable'
   /attempts/{attempt_id}/submission:
     parameters:
       - $ref: '#/components/parameters/AttemptId'
@@ -300,6 +456,67 @@ components:
       schema:
         $ref: '#/components/schemas/Id'
   responses:
+    ParticipantRegistered:
+      description: 201 为首次登记且 created 为 true，200 为再次进入且 created 为 false。
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+        Set-Cookie:
+          description: 浏览器保存的参与者 Session Cookie。
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [participant, created]
+            additionalProperties: false
+            properties:
+              participant:
+                $ref: '#/components/schemas/Participant'
+              created:
+                type: boolean
+    InProgressAttempt:
+      description: 201 创建新答卷，200 返回已有在途答卷。
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [attempt]
+            additionalProperties: false
+            properties:
+              attempt:
+                $ref: '#/components/schemas/InProgressAttempt'
+    CsrfFailed:
+      description: CSRF 校验失败，错误码 csrf_failed。
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    UnsupportedMediaType:
+      description: Content-Type 须为 application/json，错误码 unsupported_media_type。
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    RateLimitsUnavailable:
+      description: 限流存储或可信代理地址暂时不可用，错误码 rate_limit_unavailable。
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
     ValidationError:
       description: JSON 结构、答案或页码不合规，错误码 validation_error。
       headers:
@@ -342,6 +559,60 @@ components:
           schema:
             $ref: '#/components/schemas/RateLimitError'
   schemas:
+    Activity:
+      type: object
+      required: [code, title, status, categories]
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+        title:
+          type: string
+        status:
+          enum: [draft, open, paused, closed]
+        categories:
+          type: array
+          items:
+            type: object
+            required: [code, title, question_count, time_limit_seconds]
+            additionalProperties: false
+            properties:
+              code:
+                type: string
+              title:
+                type: string
+              question_count:
+                type: integer
+                minimum: 1
+              time_limit_seconds:
+                type: integer
+                minimum: 1
+    Registration:
+      type: object
+      required: [display_name, identifier, contact]
+      properties:
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 400
+        identifier:
+          type: string
+          minLength: 1
+          maxLength: 128
+        contact:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: 手机号码或电子邮件地址。
+    Participant:
+      type: object
+      required: [id, display_name]
+      additionalProperties: false
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        display_name:
+          type: string
     Id:
       type: string
       format: uuid
@@ -378,14 +649,7 @@ components:
       additionalProperties: false
       properties:
         participant:
-          type: object
-          required: [id, display_name]
-          additionalProperties: false
-          properties:
-            id:
-              $ref: '#/components/schemas/Id'
-            display_name:
-              type: string
+          $ref: '#/components/schemas/Participant'
         activity_code:
           type: string
         current_attempt:

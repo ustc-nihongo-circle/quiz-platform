@@ -1,5 +1,4 @@
 import json
-import re
 
 import pytest
 
@@ -40,7 +39,7 @@ def test_participant_page_uses_production_assets_without_mock_review_copy(client
 
 
 @pytest.mark.django_db
-def test_participant_page_bootstraps_only_non_sensitive_session_identity(client):
+def test_participant_page_leaves_identity_to_the_session_api(client):
     ActivityEdition.objects.create(
         slug="frontend-page-test",
         title="前端页面测试",
@@ -60,13 +59,10 @@ def test_participant_page_bootstraps_only_non_sensitive_session_identity(client)
     )
 
     page = client.get("/participant/").content.decode()
-    match = re.search(
-        r'<script id="initialParticipant" type="application/json">(.*?)</script>',
-        page,
-    )
-
-    assert match is not None
-    assert json.loads(match.group(1)) == {
+    assert "initialParticipant" not in page
+    assert "页面测试昵称" not in page
+    session = client.get("/api/v2/participant-session").json()["session"]
+    assert session["participant"] == {
         "id": str(client.session["quiz_participant_id"]),
         "display_name": "页面测试昵称",
     }

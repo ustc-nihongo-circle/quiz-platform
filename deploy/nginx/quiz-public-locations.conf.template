@@ -33,7 +33,18 @@ location = /api/v1/participant-session {
     limit_req zone=quiz_exit_site burst=100 nodelay;
     include @SNIPPETS_ROOT@/quiz-proxy.conf;
 }
-location = /api/v1/attempts {
+location = /api/v2/participant-session {
+    if ($request_method !~ ^(GET|POST|DELETE)$) { return 405; }
+    client_max_body_size 8k;
+    limit_req zone=quiz_read_ip burst=1000 nodelay;
+    limit_req zone=quiz_read_site burst=2000 nodelay;
+    limit_req zone=quiz_registration_ip burst=100 nodelay;
+    limit_req zone=quiz_registration_site burst=200 nodelay;
+    limit_req zone=quiz_exit_ip burst=50 nodelay;
+    limit_req zone=quiz_exit_site burst=100 nodelay;
+    include @SNIPPETS_ROOT@/quiz-proxy.conf;
+}
+location ~ "^/api/v[12]/attempts$" {
     if ($request_method !~ ^(POST)$) { return 405; }
     limit_req zone=quiz_start_ip burst=100 nodelay;
     limit_req zone=quiz_start_site burst=200 nodelay;
@@ -69,7 +80,7 @@ location = /api/v1/attempts/history {
     limit_req zone=quiz_read_site burst=2000 nodelay;
     include @SNIPPETS_ROOT@/quiz-proxy.conf;
 }
-location ~ "^/api/v2/(participant-session|attempts/history)$" {
+location ~ "^/api/v2/(activity|attempts/history)$" {
     if ($request_method !~ ^(GET)$) { return 405; }
     limit_req zone=quiz_read_ip burst=1000 nodelay;
     limit_req zone=quiz_read_site burst=2000 nodelay;
