@@ -1,0 +1,631 @@
+openapi: 3.1.0
+info:
+  title: Quiz Platform 参与者 API
+  version: 2.0.0
+  description: |
+    前后端分离版的实现契约。本文件覆盖会话恢复、交卷、历史列表和答卷详情。
+    v1.0.0 发行版使用 /api/v1。前端和 API 通过网关同源访问。
+    所有时间均带时区。会话、答卷和错误响应使用 Cache-Control: private, no-store。
+    客户端按 HTTP 状态和 error.code 分支，message 用于显示。
+    身份已被管理员去身份化时，原参与者会话失效。写请求的 CSRF 校验先于视图内的会话校验。
+servers:
+  - url: /api/v2
+security:
+  - ParticipantSession: []
+paths:
+  /participant-session:
+    get:
+      operationId: getParticipantSession
+      summary: 读取浏览器的参与者会话
+      description: |
+        每次返回服务端时间，并设置或续期 csrftoken Cookie。缺少、过期或已撤销的会话返回
+        200 和 session: null。入口届次未设置、已关闭或切换时，仍按有效会话所属届次读取。
+        current_attempt 是校核超时后唯一可继续的答卷。latest_attempt 按开始时间和 ID
+        倒序取首条，可能与 current_attempt 指向同一答卷。两项都可为空。
+        优先用 current_attempt 恢复答题，没有进行中答卷时用 latest_attempt 恢复最近状态。
+        需要题目或结果时再读答卷详情。草稿由浏览器保管。
+      security:
+        - {}
+        - ParticipantSession: []
+      responses:
+        '200':
+          description: 会话快照或匿名状态
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+            Set-Cookie:
+              description: csrftoken Cookie，由浏览器保存。写操作将当前值放入 X-CSRFToken。
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionSnapshot'
+              examples:
+                anonymous:
+                  value:
+                    server_time: '2026-11-14T14:00:00+08:00'
+                    session: null
+                active:
+                  value:
+                    server_time: '2026-11-14T14:00:20+08:00'
+                    session:
+                      participant:
+                        id: 46b5ef43-2ff0-48ed-9b5a-bd267a5cf162
+                        display_name: 演示
+                      activity_code: demo
+                      current_attempt:
+                        id: e8ff0a64-4610-48ba-a772-67e92aed9f01
+                        status: in_progress
+                      latest_attempt:
+                        id: e8ff0a64-4610-48ba-a772-67e92aed9f01
+                        status: in_progress
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /attempts/{attempt_id}/submission:
+    parameters:
+      - $ref: '#/components/parameters/AttemptId'
+    put:
+      operationId: submitAttempt
+      summary: 提交指定答卷
+      description: |
+        按服务端时间判定。通常接受至 deadline_at + 3 秒（含），达到 started_at + 30 分钟时立即超时。
+        活动暂停、关闭或切换入口时，该答卷仍按原截止规则处理。
+        未列出的题、null 和空字符串按未答处理。同一 item_id 重复出现时整次拒绝。
+        首次交卷时，题目必须属于该卷，且答案须符合题型，否则整次拒绝。
+        第一次有效提交原子封存答案、判定、分数、提交时间和兑奖词。并发或之后的提交，
+        在请求结构合法且答卷仍为 submitted 的情况下，返回首次保存的结果。
+        载荷改变也保留首次记录。当前分类最高分按查询时计算，可能随其他记录变化。
+        提交响应丢失后可以重试同一 URL 或读取答卷详情。
+      security:
+        - ParticipantSession: []
+          CsrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Submission'
+            examples:
+              answered:
+                value:
+                  answers:
+                    - item_id: 4a6ebd39-68dd-4c69-8b5f-f204bf5b0c3b
+                      answer: A
+              empty:
+                value:
+                  answers: []
+      responses:
+        '200':
+          description: 原始提交结果
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [attempt]
+                additionalProperties: false
+                properties:
+                  attempt:
+                    $ref: '#/components/schemas/SubmittedAttempt'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/SessionRequired'
+        '403':
+          description: CSRF 校验失败，错误码 csrf_failed。重新获取会话快照后可重试。
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          $ref: '#/components/responses/AttemptNotFound'
+        '409':
+          description: 答卷已超时或已作废
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                expired:
+                  value:
+                    error:
+                      code: attempt_expired
+                      message: 本次答题已经超时。
+                      field_errors: {}
+                      retryable: false
+                invalidated:
+                  value:
+                    error:
+                      code: attempt_invalidated
+                      message: 本次答题已被管理员作废。
+                      field_errors: {}
+                      retryable: false
+        '413':
+          description: 请求超过网关正文大小限制，错误码 request_too_large。
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '415':
+          description: 交卷 Content-Type 须为 application/json，错误码 unsupported_media_type。
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /attempts/history:
+    get:
+      operationId: listAttemptHistory
+      summary: 查询当前参与者在会话所属届次的答题记录
+      description: |
+        根据服务端 Session 确定参与者与活动届次。按 started_at 和 id 降序，
+        每页 20 条，超出末页时返回末页。没有记录时返回第 1 页和空数组。
+        列表包括 in_progress、submitted、timed_out、invalid。仅 submitted 有有效分数。
+        读取会校核进行中答卷的超时，current_attempt_id 为校核后可继续答卷的 ID。
+        需要继续答题或看结果时，通过答卷详情读取对应记录。
+      parameters:
+        - name: page
+          in: query
+          description: 1 至 8 位 ASCII 十进制数字，数值必须大于 0。默认第 1 页。
+          schema:
+            type: string
+            pattern: '^[0-9]{1,8}$'
+            not:
+              pattern: '^0+$'
+            default: '1'
+      responses:
+        '200':
+          description: 该会话范围内的分页记录
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/History'
+              examples:
+                empty:
+                  value:
+                    attempts: []
+                    current_attempt_id: null
+                    pagination: {page: 1, pages: 1, total: 0, page_size: 20}
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/SessionRequired'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /attempts/{attempt_id}:
+    parameters:
+      - $ref: '#/components/parameters/AttemptId'
+    get:
+      operationId: getAttempt
+      summary: 继续答题或查询指定答卷结果
+      description: |
+        只读当前 Session 所属参与者与届次的记录。读取时按现行规则将过期的记录标为 timed_out。
+        进行中答卷返回题目与原截止时间。已提交答卷同时返回本人答案和逐题对错。
+        超时与作废仅返回状态、板块和时间等元数据。所有状态均禁止返回标准答案或身份资料。
+      responses:
+        '200':
+          description: 答卷详情
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [attempt]
+                additionalProperties: false
+                properties:
+                  attempt:
+                    oneOf:
+                      - $ref: '#/components/schemas/InProgressAttempt'
+                      - $ref: '#/components/schemas/SubmittedAttempt'
+                      - $ref: '#/components/schemas/ClosedAttempt'
+        '401':
+          $ref: '#/components/responses/SessionRequired'
+        '404':
+          $ref: '#/components/responses/AttemptNotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+components:
+  securitySchemes:
+    ParticipantSession:
+      type: apiKey
+      in: cookie
+      name: sessionid
+      description: HttpOnly Session Cookie，由浏览器同源携带。公网使用 HTTPS 和 Secure Cookie。
+    CsrfToken:
+      type: apiKey
+      in: header
+      name: X-CSRFToken
+      description: 按同源 CSRF 校验传入当前 csrftoken Cookie 的值。
+  headers:
+    PrivateNoStore:
+      required: true
+      schema:
+        type: string
+        const: 'private, no-store'
+  parameters:
+    AttemptId:
+      name: attempt_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Id'
+  responses:
+    ValidationError:
+      description: JSON 结构、答案或页码不合规，错误码 validation_error。
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    SessionRequired:
+      description: 缺少、过期或已撤销的参与者会话，错误码 participant_session_required。
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    AttemptNotFound:
+      description: 答卷不存在或超出会话可访问范围，统一使用 attempt_not_found。
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    RateLimited:
+      description: 请求频率受限。等待 Retry-After 秒后由用户重试。
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+        Retry-After:
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/RateLimitError'
+  schemas:
+    Id:
+      type: string
+      format: uuid
+      pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    Timestamp:
+      type: string
+      format: date-time
+    AttemptStatus:
+      type: string
+      enum: [in_progress, submitted, timed_out, invalid]
+    AttemptReference:
+      type: object
+      required: [id, status]
+      additionalProperties: false
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        status:
+          $ref: '#/components/schemas/AttemptStatus'
+    SessionSnapshot:
+      type: object
+      required: [server_time, session]
+      additionalProperties: false
+      properties:
+        server_time:
+          $ref: '#/components/schemas/Timestamp'
+        session:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/Session'
+    Session:
+      type: object
+      required: [participant, activity_code, current_attempt, latest_attempt]
+      additionalProperties: false
+      properties:
+        participant:
+          type: object
+          required: [id, display_name]
+          additionalProperties: false
+          properties:
+            id:
+              $ref: '#/components/schemas/Id'
+            display_name:
+              type: string
+        activity_code:
+          type: string
+        current_attempt:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/AttemptReference'
+              properties:
+                status:
+                  const: in_progress
+        latest_attempt:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/AttemptReference'
+    AttemptBase:
+      type: object
+      required: [id, status, category, started_at, deadline_at, submitted_at, question_count]
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        status:
+          $ref: '#/components/schemas/AttemptStatus'
+        category:
+          type: object
+          required: [code, title]
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+            title:
+              type: string
+        started_at:
+          $ref: '#/components/schemas/Timestamp'
+        deadline_at:
+          $ref: '#/components/schemas/Timestamp'
+        submitted_at:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/Timestamp'
+        question_count:
+          type: integer
+          minimum: 1
+    InProgressAttempt:
+      allOf:
+        - $ref: '#/components/schemas/AttemptBase'
+      unevaluatedProperties: false
+      required: [questions]
+      properties:
+        status:
+          const: in_progress
+        submitted_at:
+          type: 'null'
+        questions:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/Question'
+            unevaluatedProperties: false
+    SubmittedAttempt:
+      allOf:
+        - $ref: '#/components/schemas/AttemptBase'
+      unevaluatedProperties: false
+      required: [score, score_rate, category_high_score, reward_phrase, questions]
+      properties:
+        status:
+          const: submitted
+        submitted_at:
+          $ref: '#/components/schemas/Timestamp'
+        score:
+          $ref: '#/components/schemas/Score'
+        score_rate:
+          type: number
+          minimum: 0
+          maximum: 1
+        category_high_score:
+          description: 查询时的分类最高分
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/Score'
+        reward_phrase:
+          type: [string, 'null']
+        questions:
+          type: array
+          minItems: 1
+          items:
+            allOf:
+              - $ref: '#/components/schemas/Question'
+            unevaluatedProperties: false
+            required: [answer, correct]
+            properties:
+              answer:
+                type: [string, 'null']
+              correct:
+                type: boolean
+    ClosedAttempt:
+      allOf:
+        - $ref: '#/components/schemas/AttemptBase'
+      unevaluatedProperties: false
+      properties:
+        status:
+          enum: [timed_out, invalid]
+      if:
+        properties:
+          status:
+            const: timed_out
+      then:
+        properties:
+          submitted_at:
+            type: 'null'
+    Question:
+      type: object
+      required: [id, position, prompt, type, image_url, options]
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        position:
+          type: integer
+          minimum: 1
+        prompt:
+          type: string
+          description: 题干文本。旧题下划线标注按前端约定安全渲染。
+        type:
+          type: string
+          enum: [single_choice, fill_blank]
+        image_url:
+          type: [string, 'null']
+          description: 同源题图路径，浏览器须携带该答卷所属会话。
+          pattern: '^/api/v2/attempts/[^/]+/items/[^/]+/image$'
+        options:
+          type: array
+          description: 单选含 A–D，填空为空数组。
+          items:
+            type: object
+            required: [id, text]
+            additionalProperties: false
+            properties:
+              id:
+                enum: [A, B, C, D]
+              text:
+                type: string
+      if:
+        properties:
+          type:
+            const: single_choice
+      then:
+        properties:
+          options:
+            minItems: 4
+            maxItems: 4
+      else:
+        properties:
+          options:
+            maxItems: 0
+    Score:
+      type: integer
+      minimum: 0
+    Submission:
+      type: object
+      required: [answers]
+      additionalProperties: false
+      properties:
+        answers:
+          type: array
+          description: item_id 必须唯一。空数组表示交白卷。
+          items:
+            type: object
+            required: [item_id, answer]
+            additionalProperties: false
+            properties:
+              item_id:
+                $ref: '#/components/schemas/Id'
+              answer:
+                type: [string, 'null']
+                maxLength: 500
+                description: 单选接受 A、B、C、D 及对应小写，填空为最多 500 个字符的文本。
+    History:
+      type: object
+      required: [attempts, current_attempt_id, pagination]
+      additionalProperties: false
+      properties:
+        attempts:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/HistoryEntry'
+        current_attempt_id:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/Id'
+        pagination:
+          type: object
+          required: [page, pages, total, page_size]
+          additionalProperties: false
+          properties:
+            page:
+              type: integer
+              minimum: 1
+            pages:
+              type: integer
+              minimum: 1
+            total:
+              type: integer
+              minimum: 0
+            page_size:
+              type: integer
+              const: 20
+    HistoryEntry:
+      allOf:
+        - $ref: '#/components/schemas/AttemptBase'
+      unevaluatedProperties: false
+      required: [score]
+      properties:
+        score:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/Score'
+      if:
+        properties:
+          status:
+            const: submitted
+      then:
+        properties:
+          submitted_at:
+            $ref: '#/components/schemas/Timestamp'
+          score:
+            $ref: '#/components/schemas/Score'
+      else:
+        properties:
+          score:
+            type: 'null'
+    Error:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorDetails'
+          unevaluatedProperties: false
+    ErrorDetails:
+      type: object
+      required: [code, message, field_errors, retryable]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        field_errors:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+        retryable:
+          type: boolean
+    RateLimitError:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          allOf:
+            - $ref: '#/components/schemas/ErrorDetails'
+          unevaluatedProperties: false
+          required: [retry_after_seconds]
+          properties:
+            code:
+              const: rate_limited
+            retryable:
+              const: true
+            retry_after_seconds:
+              type: integer
+              minimum: 1
+              description: 与 Retry-After 响应头一致。
