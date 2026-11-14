@@ -9,7 +9,7 @@ from typing import Any
 
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, connection, transaction
-from django.db.models import Q
+from django.db.models import Q, prefetch_related_objects
 from django.utils import timezone
 
 from .models import (
@@ -81,6 +81,10 @@ class AttemptExpired(QuizStateError):
 
 class AttemptInvalidated(QuizStateError):
     code = "attempt_invalidated"
+
+
+class ParticipantSessionRevoked(QuizStateError):
+    code = "participant_session_required"
 
 
 class ActivityMustBePaused(QuizStateError):
@@ -544,6 +548,8 @@ def _submit_attempt_atomic(
         .select_related("activity", "participant", "category_config")
         .get(pk=attempt.pk, participant=participant)
     )
+    if attempt.participant.anonymized_at is not None:
+        raise ParticipantSessionRevoked
     digest = _canonical_submission_digest(answers)
     if attempt.status == AttemptStatus.SUBMITTED:
         if attempt.submission_digest != digest:
@@ -661,10 +667,29 @@ def invalidate_attempt(*, attempt: QuizAttempt, actor, reason: str) -> QuizAttem
     return attempt
 
 
-def serialize_attempt(attempt: QuizAttempt) -> dict[str, Any]:
-    attempt = QuizAttempt.objects.select_related("category_config", "bank").prefetch_related(
-        "items__question__assets"
-    ).get(pk=attempt.pk)
+def serialize_attempt_summary(attempt: QuizAttempt) -> dict[str, Any]:
+    return {
+        "id": str(attempt.pk),
+        "status": attempt.status,
+        "category": {
+            "code": attempt.category_config.category_key,
+            "title": attempt.category_config.title,
+        },
+        "started_at": attempt.started_at.isoformat(),
+        "deadline_at": attempt.deadline_at.isoformat(),
+        "submitted_at": attempt.submitted_at.isoformat() if attempt.submitted_at else None,
+        "question_count": attempt.question_count,
+    }
+
+
+def serialize_attempt(attempt: QuizAttempt, *, api_version=1) -> dict[str, Any]:
+    if api_version == 1:
+        attempt = QuizAttempt.objects.select_related("category_config", "bank").get(pk=attempt.pk)
+    data = serialize_attempt_summary(attempt)
+    if api_version == 2 and attempt.status in {AttemptStatus.INVALID, AttemptStatus.TIMED_OUT}:
+        return data
+
+    prefetch_related_objects([attempt], "items__question__assets")
     questions = []
     is_result = attempt.status in {AttemptStatus.SUBMITTED, AttemptStatus.INVALID}
     for item in attempt.items.all():
@@ -676,7 +701,7 @@ def serialize_attempt(attempt: QuizAttempt) -> dict[str, Any]:
             "prompt": question.prompt,
             "type": question.question_type,
             "image_url": (
-                f"/api/v1/attempts/{attempt.pk}/items/{item.pk}/image"
+                f"/api/v{api_version}/attempts/{attempt.pk}/items/{item.pk}/image"
                 if asset
                 else None
             ),
@@ -695,19 +720,7 @@ def serialize_attempt(attempt: QuizAttempt) -> dict[str, Any]:
             entry["answer"] = item.submitted_answer
             entry["correct"] = item.is_correct
         questions.append(entry)
-    data: dict[str, Any] = {
-        "id": str(attempt.pk),
-        "status": attempt.status,
-        "category": {
-            "code": attempt.category_config.category_key,
-            "title": attempt.category_config.title,
-        },
-        "started_at": attempt.started_at.isoformat(),
-        "deadline_at": attempt.deadline_at.isoformat(),
-        "submitted_at": attempt.submitted_at.isoformat() if attempt.submitted_at else None,
-        "question_count": attempt.question_count,
-        "questions": questions,
-    }
+    data["questions"] = questions
     if is_result:
         high_score = CategoryHighScore.objects.filter(
             participant=attempt.participant,

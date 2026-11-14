@@ -1,6 +1,7 @@
 from django.urls import path
 from django.views.generic import RedirectView
 
+from . import participant_api_v2 as v2
 from .api import (
     activity_detail,
     attempt_detail,
@@ -34,5 +35,18 @@ urlpatterns = [
         "api/v1/attempts/<uuid:attempt_id>/submission",
         attempt_submission,
         name="api-attempt-submission",
+    ),
+    path("api/v2/participant-session", v2.session_snapshot, name="api-v2-participant-session"),
+    path("api/v2/attempts/history", v2.attempt_history, name="api-v2-attempt-history"),
+    path("api/v2/attempts/<uuid:attempt_id>", v2.attempt_detail, name="api-v2-attempt-detail"),
+    path(
+        "api/v2/attempts/<uuid:attempt_id>/submission",
+        v2.attempt_submission,
+        name="api-v2-attempt-submission",
+    ),
+    path(
+        "api/v2/attempts/<uuid:attempt_id>/items/<uuid:item_id>/image",
+        v2.attempt_item_image,
+        name="api-v2-attempt-item-image",
     ),
 ]

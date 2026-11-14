@@ -4,7 +4,8 @@ from django.shortcuts import render
 from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import ensure_csrf_cookie
 
-from .models import AttemptStatus, Participant, QuizAttempt
+from .api import session_participant
+from .models import AttemptStatus, QuizAttempt
 from .services import refresh_attempt_timeout, serialize_attempt
 
 
@@ -28,22 +29,13 @@ def readiness(request):
 @ensure_csrf_cookie
 def participant_page(request):
     """Render the same-origin participant application shell."""
-    participant_id = request.session.get("quiz_participant_id")
-    activity_id = request.session.get("quiz_activity_id")
-    participant = None
-    if participant_id and activity_id:
-        participant = (
-            Participant.objects.select_related("identity")
-            .filter(pk=participant_id, activity_id=activity_id)
-            .first()
-        )
+    participant = session_participant(request, require_identity=True)
     initial_participant = None
     initial_attempt = None
     if participant is not None:
-        identity = getattr(participant, "identity", None)
         initial_participant = {
             "id": str(participant.pk),
-            "display_name": identity.display_name if identity is not None else "参与者",
+            "display_name": participant.identity.display_name,
         }
         attempt = (
             QuizAttempt.objects.filter(participant=participant)

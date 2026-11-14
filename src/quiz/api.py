@@ -23,6 +23,7 @@ from .services import (
     ActivityNotOpen,
     AttemptExpired,
     AttemptInvalidated,
+    ParticipantSessionRevoked,
     QuestionBankUnavailable,
     refresh_attempt_timeout,
     serialize_attempt,
@@ -70,12 +71,15 @@ def rate_limit_error(error):
 
 def csrf_failure(request: HttpRequest, reason=""):
     if request.path.startswith("/api/"):
-        return api_error(
+        response = api_error(
             "csrf_failed",
             "请求来源校验失败，请刷新页面后重试。",
             status=403,
             retryable=True,
         )
+        if request.path.startswith("/api/v2/"):
+            response["Cache-Control"] = "private, no-store"
+        return response
     return default_csrf_failure(request, reason=reason)
 
 
@@ -85,9 +89,12 @@ def current_activity() -> ActivityEdition | None:
     ).exclude(status=ActivityStatus.ARCHIVED).first()
 
 
-def parse_json_object(request: HttpRequest) -> dict[str, object]:
+def parse_json_object(request: HttpRequest, *, max_bytes: int | None = None) -> dict[str, object]:
+    body = request.body if max_bytes is None else request.read(max_bytes + 1)
+    if max_bytes is not None and len(body) > max_bytes:
+        raise RequestDataTooBig
     try:
-        value = json.loads(request.body or b"{}")
+        value = json.loads(body or b"{}")
     except (TypeError, ValueError, UnicodeDecodeError, RecursionError) as error:
         raise ValidationError("请求正文必须是 JSON 对象。") from error
     if not isinstance(value, dict):
@@ -129,12 +136,21 @@ def validation_error_response(error: ValidationError) -> JsonResponse:
     return api_error("validation_error", message, status=400, field_errors=fields)
 
 
-def session_participant(request: HttpRequest) -> Participant | None:
+def session_participant(request: HttpRequest, *, require_identity=False) -> Participant | None:
     participant_id = request.session.get("quiz_participant_id")
     activity_id = request.session.get("quiz_activity_id")
     if not participant_id or not activity_id:
         return None
-    return Participant.objects.filter(pk=participant_id, activity_id=activity_id).first()
+    participants = Participant.objects.filter(
+        pk=participant_id, activity_id=activity_id, anonymized_at__isnull=True
+    )
+    if require_identity:
+        participants = (
+            participants.filter(identity__isnull=False)
+            .select_related("activity", "identity")
+            .only("activity", "activity__slug", "identity__display_name")
+        )
+    return participants.first()
 
 
 @require_GET
@@ -285,16 +301,17 @@ def attempt_item_image(request: HttpRequest, attempt_id, item_id):
     participant = session_participant(request)
     if participant is None:
         raise Http404
-    item = (
-        AttemptItem.objects.select_related("attempt__bank", "question")
-        .prefetch_related("question__assets")
-        .filter(
-            pk=item_id,
-            attempt_id=attempt_id,
-            attempt__participant=participant,
+    return question_image_response(
+        AttemptItem.objects.filter(
+            pk=item_id, attempt_id=attempt_id, attempt__participant=participant
         )
-        .first()
     )
+
+
+def question_image_response(items):
+    item = items.select_related("attempt__bank", "question").prefetch_related(
+        "question__assets"
+    ).first()
     if item is None:
         raise Http404
     asset = item.question.assets.first()
@@ -338,6 +355,8 @@ def attempt_submission(request: HttpRequest, attempt_id) -> JsonResponse:
         )
     except ValidationError as error:
         return validation_error_response(error)
+    except ParticipantSessionRevoked:
+        return api_error("attempt_not_found", "未找到答题记录。", status=404)
     except AttemptExpired:
         return api_error("attempt_expired", "本次答题已经超时。", status=409)
     except AttemptInvalidated:

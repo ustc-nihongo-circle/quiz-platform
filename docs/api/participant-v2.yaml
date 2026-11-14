@@ -3,11 +3,12 @@ info:
   title: Quiz Platform 参与者 API
   version: 2.0.0
   description: |
-    前后端分离版的实现契约。本文件覆盖会话恢复、交卷、历史列表和答卷详情。
+    前后端分离版的实现契约。本文件覆盖会话恢复、交卷、历史列表、答卷详情及其题图。
     v1.0.0 发行版使用 /api/v1。前端和 API 通过网关同源访问。
     所有时间均带时区。会话、答卷和错误响应使用 Cache-Control: private, no-store。
     客户端按 HTTP 状态和 error.code 分支，message 用于显示。
     身份已被管理员去身份化时，原参与者会话失效。写请求的 CSRF 校验先于视图内的会话校验。
+    429 由启用限流的网关返回。
 servers:
   - url: /api/v2
 security:
@@ -150,7 +151,7 @@ paths:
                       field_errors: {}
                       retryable: false
         '413':
-          description: 请求超过网关正文大小限制，错误码 request_too_large。
+          description: 请求超过 1 MiB 正文限制，错误码 request_too_large。
           headers:
             Cache-Control:
               $ref: '#/components/headers/PrivateNoStore'
@@ -241,6 +242,34 @@ paths:
                       - $ref: '#/components/schemas/ClosedAttempt'
         '401':
           $ref: '#/components/responses/SessionRequired'
+        '404':
+          $ref: '#/components/responses/AttemptNotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /attempts/{attempt_id}/items/{item_id}/image:
+    parameters:
+      - $ref: '#/components/parameters/AttemptId'
+      - name: item_id
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/Id'
+    get:
+      operationId: getAttemptItemImage
+      summary: 获取答卷题图
+      description: 仅返回本人同届次的进行中或已提交答卷中指定答题项的题图。
+      security:
+        - {}
+        - ParticipantSession: []
+      responses:
+        '200':
+          description: 图片字节，媒体类型由导入的题图决定。
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            image/*: {}
+            application/octet-stream: {}
         '404':
           $ref: '#/components/responses/AttemptNotFound'
         '429':
@@ -530,7 +559,9 @@ components:
               answer:
                 type: [string, 'null']
                 maxLength: 500
-                description: 单选接受 A、B、C、D 及对应小写，填空为最多 500 个字符的文本。
+                description: |
+                  单选接受 A、B、C、D 及对应小写，填空为最多 500 个字符的文本。
+                  文本不得包含空字符或未配对的 Unicode 代理码点。
     History:
       type: object
       required: [attempts, current_attempt_id, pagination]
